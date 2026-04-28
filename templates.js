@@ -311,9 +311,15 @@ function generateItems({
     add('Potje of reispotje', 'Baby & kids');
   }
   if (hasChild) {
-    add('Speelgoed / spelletjes voor onderweg', 'Baby & kids');
+    add('Knuffel / favoriet speelgoed', 'Baby & kids');
+    add('Speelgoed voor op de bestemming', 'Baby & kids');
+    add('Kleurboek + kleurpotloden', 'Baby & kids');
     add('Tablet + opladers (downloaded films)', 'Baby & kids');
+    if (transport === 'car' || transport === 'train') add('Spelletjes / boekjes voor onderweg', 'Baby & kids');
     if (doesAct('themepark')) add('Polsbandje met telefoonnummer (attractiepark)', 'Baby & kids');
+  }
+  if (hasToddler && (transport === 'car' || transport === 'train')) {
+    add('Auto- / treinspelletjes voor onderweg', 'Baby & kids');
   }
 
   // ===== Transport =====
@@ -323,6 +329,14 @@ function generateItems({
     add('Vloeistoffen <100ml in transparant zakje', 'Transport');
     add('Powerbank in handbagage (niet in ruim!)', 'Transport');
     add('Nekkussen + oogmasker + oordoppen', 'Transport');
+    add('Vest of trui voor in cabine', 'Transport');
+    if (hasBaby || hasToddler) add('Snoepje of fles voor opstijgen/landen (oren)', 'Transport');
+    // Vliegtuig = beperkt: dingen die je niet meeneemt maar ter plekke huurt
+    if (accommodation === 'camping') {
+      add('Tent/uitrusting ter plekke huren of opsturen', 'Transport');
+    }
+    if (doesAct('cycling')) add('Fietsen ter plekke huren', 'Transport');
+    if (doesAct('skiing')) add('Ski-uitrusting ter plekke huren', 'Transport');
   }
   if (transport === 'car') {
     add('Snacks en water voor onderweg', 'Transport');
@@ -331,6 +345,19 @@ function generateItems({
     add('Veiligheidshesje en gevarendriehoek', 'Transport');
     if (!home) add('Vignet / tol controleren voor dit land', 'Transport');
     if (hasBaby || hasToddler || hasChild) add('Kinderzitje/autostoel controleren', 'Transport');
+    // Auto = je kunt veel meenemen
+    if (accommodation === 'camping' || accommodation === 'house') {
+      add('Koelbox + koelelementen', 'Transport');
+    }
+    if (accommodation === 'camping') {
+      add('Campingstoelen', 'Accommodatie');
+      add('Campingtafel of klaptafel', 'Accommodatie');
+      add('BBQ / gasbrander + gas', 'Accommodatie');
+      add('Buitenverlichting / lantaarn', 'Accommodatie');
+    }
+    if (doesAct('cycling')) add('Fietsen + fietsenrek (of huren ter plekke)', 'Transport');
+    if (doesAct('skiing') && (has('cold','freezing','snow'))) add('Sneeuwkettingen voor de auto', 'Transport');
+    if (has('snow', 'freezing')) add('IJskrabber + ruitenontdooier', 'Transport');
   }
   if (transport === 'train') {
     add('Treintickets / e-tickets', 'Transport');
