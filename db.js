@@ -47,6 +47,29 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_checklists_user ON checklists(user_id);
     CREATE INDEX IF NOT EXISTS idx_items_checklist ON items(checklist_id);
   `);
+
+  // Migratie: weather van TEXT naar JSONB (multi-select).
+  // Idempotent: alleen als de kolom nog text is.
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+         WHERE table_name = 'checklists'
+           AND column_name = 'weather'
+           AND data_type = 'text'
+      ) THEN
+        ALTER TABLE checklists
+          ALTER COLUMN weather TYPE jsonb
+          USING CASE
+            WHEN weather IS NULL OR weather = '' THEN '[]'::jsonb
+            WHEN weather LIKE '[%' THEN weather::jsonb
+            ELSE jsonb_build_array(weather)
+          END;
+        ALTER TABLE checklists ALTER COLUMN weather SET DEFAULT '[]'::jsonb;
+      END IF;
+    END $$;
+  `);
 }
 
 module.exports = { pool, init };

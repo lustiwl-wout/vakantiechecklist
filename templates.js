@@ -32,16 +32,35 @@ function daysBetween(start, end) {
   return Math.max(1, Math.round((b - a) / 86400000) + 1);
 }
 
+// Suggesties voor hoeveelheid kleding per persoon, op basis van duur.
+// Houdt er rekening mee dat je op de vertrekdag al iets aan hebt.
+function defaultQuantities(days) {
+  return {
+    underwear: Math.max(1, Math.min(days, 14)),
+    socks: Math.max(1, Math.min(days, 14)),
+    tops: Math.max(1, Math.min(Math.ceil(days / 1.5) - 1, 14)),
+    bottoms: Math.max(1, Math.min(Math.ceil(days / 3) - 1, 7)),
+  };
+}
+
+function travelerLabel(t, idx, total) {
+  const name = t && t.name ? String(t.name).trim() : '';
+  if (name) return ` (${name})`;
+  if (total > 1) return ` (reiziger ${idx + 1})`;
+  return '';
+}
+
 function generateItems({
   destination,
   startDate,
   endDate,
   travelers = [],
   transport,
-  weather,
+  weather = [],
   accommodation,
   activities = [],
   medications = [],
+  quantities = {},
 }) {
   const items = [];
   const add = (text, category) => items.push({ text, category });
@@ -54,7 +73,20 @@ function generateItems({
   const hasChild = travelers.some(t => t.age != null && t.age >= 5 && t.age < 13);
   const hasSenior = travelers.some(t => t.age != null && t.age >= 65);
 
-  // Documenten
+  const w = new Set(Array.isArray(weather) ? weather : []);
+  const has = (...ks) => ks.some(k => w.has(k));
+  const acts = new Set(Array.isArray(activities) ? activities : []);
+  const doesAct = (...ks) => ks.some(k => acts.has(k));
+
+  const defaults = defaultQuantities(days);
+  const q = {
+    underwear: quantities.underwear != null ? Number(quantities.underwear) : defaults.underwear,
+    socks: quantities.socks != null ? Number(quantities.socks) : defaults.socks,
+    tops: quantities.tops != null ? Number(quantities.tops) : defaults.tops,
+    bottoms: quantities.bottoms != null ? Number(quantities.bottoms) : defaults.bottoms,
+  };
+
+  // ===== Documenten =====
   add(home ? 'ID-kaart' : 'Paspoort (geldig)', 'Documenten');
   add('Reisverzekering / polisnummer', 'Documenten');
   if (!home) add('Europees ziekteverzekeringsbewijs (EHIC)', 'Documenten');
@@ -65,76 +97,86 @@ function generateItems({
   }
   if (accommodation) add('Reservering accommodatie (bevestigingsmail / adres)', 'Documenten');
 
-  // Geld
+  // ===== Geld =====
   add('Pinpas', 'Geld');
   add('Creditcard', 'Geld');
   if (!euro && !home) add(`Vreemde valuta / contant geld voor ${destination || 'bestemming'}`, 'Geld');
 
-  // Elektronica
+  // ===== Elektronica =====
   add('Telefoon', 'Elektronica');
   add('Telefoonoplader', 'Elektronica');
   add('Powerbank', 'Elektronica');
   if (!home && !euro) add('Stekkeradapter (controleer type voor land)', 'Elektronica');
   if (days >= 4) add('Koptelefoon / oortjes', 'Elektronica');
 
-  // Kleding per reiziger (hoeveelheid afhankelijk van duur).
-  // Je draagt op de vertrekdag al iets, dus eentje minder mee.
-  const undies = Math.max(1, Math.min(days, 14));
-  const tops = Math.max(1, Math.min(Math.ceil(days / 1.5) - 1, 14));
-  const bottoms = Math.max(1, Math.min(Math.ceil(days / 3) - 1, 7));
+  // ===== Per reiziger: kleding (hoeveelheden) =====
   travelers.forEach((t, i) => {
-    const parts = [];
-    if (t.name && String(t.name).trim()) parts.push(String(t.name).trim());
-    else if (travelers.length > 1) parts.push(`reiziger ${i + 1}`);
-    if (t.age != null) parts.push(`${t.age} jr`);
-    const label = parts.length ? ` (${parts.join(', ')})` : '';
-    add(`Ondergoed × ${undies}${label}`, 'Kleding');
-    add(`Sokken × ${undies}${label}`, 'Kleding');
-    add(`T-shirts / bovenstukken × ${tops}${label}`, 'Kleding');
-    add(`Broeken / rokken × ${bottoms}${label}`, 'Kleding');
+    const label = travelerLabel(t, i, travelers.length);
+    if (q.underwear > 0) add(`Ondergoed × ${q.underwear}${label}`, 'Kleding');
+    if (q.socks > 0) add(`Sokken × ${q.socks}${label}`, 'Kleding');
+    if (q.tops > 0) add(`T-shirts / bovenstukken × ${q.tops}${label}`, 'Kleding');
+    if (q.bottoms > 0) add(`Broeken / rokken × ${q.bottoms}${label}`, 'Kleding');
     add(`Pyjama${label}`, 'Kleding');
-    add(`Schoenen (comfortabel)${label}`, 'Kleding');
+    add(`Comfortabele schoenen${label}`, 'Kleding');
   });
 
-  // Weer
-  if (weather === 'hot') {
-    add('Zonnebrand (SPF 30+)', 'Verzorging');
-    add('Aftersun', 'Verzorging');
-    add('Zonnebril', 'Kleding');
-    add('Hoed / pet', 'Kleding');
+  // ===== Weer (multi-select op temperatuur en condities) =====
+  if (has('hot')) {
     add('Korte broeken', 'Kleding');
-    add('Lichte zomerkleding', 'Kleding');
+    add('Zomerjurk / dunne zomertops', 'Kleding');
+    add('Slippers / sandalen', 'Kleding');
   }
-  if (weather === 'cold') {
+  if (has('warm')) {
+    add('T-shirts (extra)', 'Kleding');
+    add('Lichte lange broek', 'Kleding');
+    add('Vest voor de avond', 'Kleding');
+  }
+  if (has('mild')) {
+    add('Trui of dikker vest', 'Kleding');
+    add('Lange broek', 'Kleding');
+    add('Lichte jas', 'Kleding');
+  }
+  if (has('cool')) {
+    add('Warme trui', 'Kleding');
+    add('Tussenjas', 'Kleding');
+    add('Lange broek', 'Kleding');
+    add('Dikkere sokken', 'Kleding');
+  }
+  if (has('cold')) {
     add('Warme winterjas', 'Kleding');
+    add('Dikke trui', 'Kleding');
     add('Muts', 'Kleding');
     add('Sjaal', 'Kleding');
     add('Handschoenen', 'Kleding');
+  }
+  if (has('freezing')) {
     add('Thermo-ondergoed', 'Kleding');
-    add('Warme trui(en)', 'Kleding');
+    add('Dikke winterjas', 'Kleding');
+    add('Gevoerde handschoenen', 'Kleding');
+    add('Warme muts', 'Kleding');
+    add('Sjaal', 'Kleding');
+    add('Dikke wollen sokken', 'Kleding');
     add('Lipbalsem', 'Verzorging');
   }
-  if (weather === 'rainy') {
+  if (has('sunny', 'hot')) {
+    add('Zonnebrand (SPF 30+)', 'Verzorging');
+    add('Zonnebril', 'Kleding');
+    add('Hoed / pet', 'Kleding');
+  }
+  if (has('hot')) {
+    add('Aftersun', 'Verzorging');
+  }
+  if (has('rainy')) {
     add('Regenjas', 'Kleding');
     add('Paraplu', 'Kleding');
     add('Waterdichte schoenen', 'Kleding');
   }
-  if (weather === 'mild') {
-    add('Vest / dunne trui', 'Kleding');
-    add('Lichte jas', 'Kleding');
-  }
-  if (weather === 'mixed') {
-    add('Regenjas', 'Kleding');
-    add('Paraplu', 'Kleding');
-    add('Vest / dunne trui', 'Kleding');
-    add('Lichte jas', 'Kleding');
-    add('Lange broek', 'Kleding');
-    add('Korte broek', 'Kleding');
-    add('Laagjes (lange en korte mouw)', 'Kleding');
-    add('Waterdichte schoenen / stevige schoenen', 'Kleding');
+  if (has('snow')) {
+    add('Waterdichte / warme schoenen', 'Kleding');
+    add('Sneeuwlaarzen', 'Kleding');
   }
 
-  // Accommodatie
+  // ===== Accommodatie =====
   if (accommodation === 'camping') {
     add('Tent', 'Accommodatie');
     add('Slaapzak', 'Accommodatie');
@@ -161,53 +203,70 @@ function generateItems({
     add('Cadeautje voor de gastheer/-vrouw', 'Accommodatie');
   }
 
-  // Activiteiten
-  if (activities.includes('swimming')) {
-    add('Zwemkleding', 'Activiteiten');
+  // ===== Activiteiten =====
+  if (doesAct('beach')) {
     add('Strandhanddoek', 'Activiteiten');
-    add('Slippers / waterschoenen', 'Activiteiten');
-    add('Zwembril', 'Activiteiten');
+    add('Strandtas', 'Activiteiten');
+    add('Boek / e-reader', 'Activiteiten');
+    add('Waterschoenen', 'Activiteiten');
   }
-  if (activities.includes('hiking')) {
+  if (doesAct('swimming', 'beach', 'watersport', 'pool')) {
+    add('Zwemkleding', 'Activiteiten');
+    add('Slippers', 'Activiteiten');
+  }
+  if (doesAct('watersport')) {
+    add('Snorkelset', 'Activiteiten');
+    add('Zwembril', 'Activiteiten');
+    add('Rashguard / UV-shirt', 'Activiteiten');
+  }
+  if (doesAct('hiking')) {
     add('Wandelschoenen', 'Activiteiten');
     add('Dagrugzak', 'Activiteiten');
     add('Bidon / waterfles', 'Activiteiten');
     add('Wandelsokken', 'Activiteiten');
+    add('Pleisters voor blaren', 'Verzorging');
   }
-  if (activities.includes('skiing')) {
+  if (doesAct('skiing')) {
     add('Ski-/snowboardjas en -broek', 'Activiteiten');
     add('Skihandschoenen', 'Activiteiten');
     add('Skibril', 'Activiteiten');
     add('Helm', 'Activiteiten');
     add('Skipas / huurbevestiging', 'Activiteiten');
   }
-  if (activities.includes('cycling')) {
+  if (doesAct('cycling')) {
     add('Fietshelm', 'Activiteiten');
     add('Fietshandschoenen', 'Activiteiten');
     add('Fietsbroek', 'Activiteiten');
   }
-  if (activities.includes('nightlife')) {
+  if (doesAct('themepark')) {
+    add('Comfortabele wandelschoenen voor de hele dag', 'Activiteiten');
+    add('Kleingeld voor kluisjes', 'Activiteiten');
+    add('Dunne regenponcho (waterattracties)', 'Activiteiten');
+    add('Snacks / tussendoortjes', 'Activiteiten');
+    add('Reservekleding (voor waterattracties)', 'Activiteiten');
+  }
+  if (doesAct('citytrip', 'cultural')) {
+    add('Comfortabele wandelschoenen voor de stad', 'Activiteiten');
+    add('Reisgids / opgeslagen tickets', 'Activiteiten');
+    add('Openbaarvervoer-app / kaart', 'Activiteiten');
+    add('Kleine schoudertas / heuptas', 'Activiteiten');
+  }
+  if (doesAct('daytrip')) {
+    add('Dagrugzak', 'Activiteiten');
+    add('Bidon / waterfles', 'Activiteiten');
+    add('Snacks voor onderweg', 'Activiteiten');
+  }
+  if (doesAct('nightlife')) {
     add('Nette kleding voor uitgaan', 'Activiteiten');
     add('Nette schoenen', 'Activiteiten');
   }
-  if (activities.includes('cultural')) {
-    add('Reisgids / opgeslagen tickets', 'Activiteiten');
-    add('Comfortabele wandelschoenen voor de stad', 'Activiteiten');
-  }
-  if (activities.includes('beach')) {
-    add('Strandlaken', 'Activiteiten');
-    add('Strandtas', 'Activiteiten');
-    add('Boek / e-reader', 'Activiteiten');
-  }
 
-  // Verzorging
+  // ===== Verzorging =====
   add('Tandenborstel + tandpasta', 'Verzorging');
   add('Shampoo / douchegel', 'Verzorging');
   add('Deodorant', 'Verzorging');
   add('Haarborstel / kam', 'Verzorging');
-  const meds = (medications || [])
-    .map(m => String(m || '').trim())
-    .filter(Boolean);
+  const meds = (medications || []).map(m => String(m || '').trim()).filter(Boolean);
   if (meds.length) {
     for (const m of meds) add(`Medicijn: ${m}`, 'Verzorging');
   } else {
@@ -217,7 +276,7 @@ function generateItems({
   if (days >= 7) add('Nagelknipper', 'Verzorging');
   if (hasSenior) add('Extra medicatie + recepten', 'Verzorging');
 
-  // Baby / kinderen
+  // ===== Baby / kinderen =====
   if (hasBaby) {
     add('Luiers (ruim genoeg)', 'Baby & kids');
     add('Babydoekjes', 'Baby & kids');
@@ -237,7 +296,7 @@ function generateItems({
     add('Tablet + opladers (downloaded films)', 'Baby & kids');
   }
 
-  // Transport-specifiek
+  // ===== Transport =====
   if (transport === 'plane') {
     add('Handbagage onder limiet checken', 'Transport');
     add('Vloeistoffen <100ml in transparant zakje', 'Transport');
@@ -248,7 +307,6 @@ function generateItems({
     add('Auto-oplader / USB-kabel', 'Transport');
     add('Navigatie / kaarten / offline route', 'Transport');
     add('Veiligheidshesje en gevarendriehoek', 'Transport');
-    add('Reservebrandstof-app / tankpas', 'Transport');
   }
   if (transport === 'train') {
     add('Treintickets / e-tickets', 'Transport');
@@ -256,12 +314,12 @@ function generateItems({
     add('Boek / podcast voor onderweg', 'Transport');
   }
 
-  // Algemeen / gemak
+  // ===== Overig =====
   add('Boodschappentas / opvouwbare tas', 'Overig');
   add('Plastic zakjes voor vuil wasgoed', 'Overig');
   if (days >= 7) add('Wasmiddel / wasstrips (voor langere reis)', 'Overig');
 
-  // Verwijder duplicaten op tekst (kan voorkomen door overlap regels)
+  // Verwijder duplicaten op tekst
   const seen = new Set();
   const dedup = [];
   for (const it of items) {
@@ -270,18 +328,7 @@ function generateItems({
     seen.add(k);
     dedup.push(it);
   }
-
   return dedup.map((it, i) => ({ ...it, position: i }));
 }
 
-const ACTIVITY_OPTIONS = [
-  { value: 'swimming', label: 'Zwemmen' },
-  { value: 'beach', label: 'Strand' },
-  { value: 'hiking', label: 'Wandelen / hiken' },
-  { value: 'cycling', label: 'Fietsen' },
-  { value: 'skiing', label: 'Skiën / snowboarden' },
-  { value: 'cultural', label: 'Cultuur / steden' },
-  { value: 'nightlife', label: 'Uitgaan' },
-];
-
-module.exports = { generateItems, ACTIVITY_OPTIONS };
+module.exports = { generateItems, defaultQuantities };

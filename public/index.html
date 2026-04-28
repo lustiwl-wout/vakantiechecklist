@@ -7,9 +7,10 @@
   <title>Vakantiechecklist</title>
   <link rel="stylesheet" href="/style.css" />
   <link rel="icon" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='0.9em' font-size='90'>🧳</text></svg>" />
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js" defer></script>
 </head>
 <body>
-  <header class="topbar">
+  <header class="topbar no-print">
     <a href="#/" class="brand">🧳 Vakantiechecklist</a>
     <nav id="nav" class="nav"></nav>
   </header>
@@ -18,11 +19,11 @@
     <p class="loading">Laden…</p>
   </main>
 
-  <footer class="footer">
+  <footer class="footer no-print">
     <small>Inpaklijsten op maat — gemaakt voor PC, tablet en mobiel.</small>
   </footer>
 
-  <div id="toast" class="toast" hidden></div>
+  <div id="toast" class="toast no-print" hidden></div>
 
   <script src="/app.js"></script>
 </body>
