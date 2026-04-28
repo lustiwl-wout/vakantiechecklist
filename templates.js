@@ -220,9 +220,11 @@ function generateItems({
     add('Zwemkleding', 'Activiteiten');
     add('Slippers / badslippers', 'Activiteiten');
   }
+  if (doesAct('pool', 'swimming', 'watersport')) {
+    add('Zwembril', 'Activiteiten');
+  }
   if (doesAct('watersport')) {
     add('Snorkelset', 'Activiteiten');
-    add('Zwembril', 'Activiteiten');
     add('Rashguard / UV-shirt', 'Activiteiten');
   }
   if (doesAct('hiking')) {
@@ -241,18 +243,20 @@ function generateItems({
   }
   if (doesAct('cycling')) {
     add('Fietshelm', 'Activiteiten');
-    add('Fietshandschoenen', 'Activiteiten');
-    add('Fietsbroek', 'Activiteiten');
+    add('Comfortabele kleding voor fietsen', 'Activiteiten');
+    add('Slot / kettingslot', 'Activiteiten');
+    add('Bidon / waterfles', 'Activiteiten');
   }
   if (doesAct('themepark')) {
-    add('Comfortabele wandelschoenen voor de hele dag', 'Activiteiten');
+    add('Comfortabele wandelschoenen', 'Activiteiten');
     add('Kleingeld voor kluisjes', 'Activiteiten');
     add('Dunne regenponcho (waterattracties)', 'Activiteiten');
     add('Snacks en tussendoortjes', 'Activiteiten');
     add('Reservekleding (voor waterattracties)', 'Activiteiten');
+    add('Dagrugzak of kleine rugtas', 'Activiteiten');
   }
   if (doesAct('citytrip', 'cultural')) {
-    add('Comfortabele wandelschoenen voor de stad', 'Activiteiten');
+    add('Comfortabele wandelschoenen', 'Activiteiten');
     add('Reisgids / opgeslagen tickets', 'Activiteiten');
     add('Openbaarvervoer-app / kaart', 'Activiteiten');
     add('Kleine schoudertas / heuptas', 'Activiteiten');
@@ -261,6 +265,7 @@ function generateItems({
     add('Dagrugzak', 'Activiteiten');
     add('Bidon / waterfles', 'Activiteiten');
     add('Snacks en tussendoortjes', 'Activiteiten');
+    add('Geplande tickets / reserveringen meenemen', 'Activiteiten');
   }
   if (doesAct('nightlife')) {
     add('Nette kleding voor uitgaan', 'Activiteiten');
