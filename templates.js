@@ -128,11 +128,13 @@ function generateItems({
     add('Korte broeken', 'Kleding');
     add('Zomerjurk / dunne zomertops', 'Kleding');
     if (!doesAct('beach', 'swimming', 'watersport', 'pool')) add('Slippers / sandalen', 'Kleding');
+    add('Lichte jas of vest voor airco / koelere avond', 'Kleding');
   }
   if (has('warm')) {
     add('T-shirts (extra)', 'Kleding');
     add('Lichte lange broek', 'Kleding');
     add('Vest voor de avond', 'Kleding');
+    add('Lichte jas (avond / airco)', 'Kleding');
   }
   if (has('mild')) {
     add('Trui of dikker vest', 'Kleding');
