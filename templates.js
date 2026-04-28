@@ -213,9 +213,9 @@ function generateItems({
   if (doesAct('beach')) {
     add('Strandhanddoek', 'Activiteiten');
     add('Strandtas', 'Activiteiten');
-    add('Boek / e-reader', 'Activiteiten');
     add('Waterschoenen', 'Activiteiten');
   }
+  if (days >= 3) add('Boek / e-reader voor onderweg', 'Overig');
   if (doesAct('swimming', 'beach', 'watersport', 'pool')) {
     add('Zwemkleding', 'Activiteiten');
     add('Slippers / badslippers', 'Activiteiten');
@@ -244,7 +244,6 @@ function generateItems({
   if (doesAct('cycling')) {
     add('Fietshelm', 'Activiteiten');
     add('Comfortabele kleding voor fietsen', 'Activiteiten');
-    add('Slot / kettingslot', 'Activiteiten');
     add('Bidon / waterfles', 'Activiteiten');
   }
   if (doesAct('themepark')) {
@@ -253,7 +252,7 @@ function generateItems({
     add('Dunne regenponcho (waterattracties)', 'Activiteiten');
     add('Snacks en tussendoortjes', 'Activiteiten');
     add('Reservekleding (voor waterattracties)', 'Activiteiten');
-    add('Dagrugzak of kleine rugtas', 'Activiteiten');
+    add('Dagrugzak', 'Activiteiten');
   }
   if (doesAct('citytrip', 'cultural')) {
     add('Comfortabele wandelschoenen', 'Activiteiten');
@@ -273,10 +272,12 @@ function generateItems({
   }
 
   // ===== Verzorging =====
-  add('Tandenborstel + tandpasta', 'Verzorging');
+  const nPpl = Math.max(1, travelers.length);
+  const x = nPpl > 1 ? ` × ${nPpl}` : '';
+  add(`Tandenborstel + tandpasta${x}`, 'Verzorging');
   add('Shampoo / douchegel', 'Verzorging');
   add('Conditioner', 'Verzorging');
-  add('Deodorant', 'Verzorging');
+  add(`Deodorant${x}`, 'Verzorging');
   add('Scheerspullen / scheermesje', 'Verzorging');
   add('Haarborstel / kam', 'Verzorging');
   add('Vochtige doekjes', 'Verzorging');
