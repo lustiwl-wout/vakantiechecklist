@@ -1,8 +1,11 @@
 const { Pool } = require('pg');
 
+const url = process.env.DATABASE_URL || '';
+const useSSL = /sslmode=(require|verify-ca|verify-full)/i.test(url) || /\.neon\.tech/i.test(url);
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  connectionString: url,
+  ssl: useSSL ? { rejectUnauthorized: false } : false,
   max: 5,
 });
 
