@@ -34,11 +34,15 @@ function daysBetween(start, end) {
 
 // Suggesties voor hoeveelheid kleding per persoon, op basis van duur.
 // Houdt er rekening mee dat je op de vertrekdag al iets aan hebt.
+// Suggesties voor hoeveelheid kleding per persoon, op basis van duur.
+// Vuile-was-items (ondergoed, sokken, t-shirts) krijgen +1 reserve.
+// Voor broeken/truien rekenen we erop dat je er één draagt op vertrekdag.
 function defaultQuantities(days) {
   return {
-    underwear: Math.max(1, Math.min(days, 14)),
-    socks: Math.max(1, Math.min(days, 14)),
-    tops: Math.max(1, Math.min(Math.ceil(days / 1.5) - 1, 14)),
+    underwear: Math.max(2, Math.min(days + 1, 15)),
+    socks: Math.max(2, Math.min(days + 1, 15)),
+    tshirts: Math.max(2, Math.min(days + 1, 15)),
+    sweaters: Math.max(1, Math.min(Math.ceil(days / 4), 4)),
     bottoms: Math.max(1, Math.min(Math.ceil(days / 3) - 1, 7)),
   };
 }
@@ -82,7 +86,8 @@ function generateItems({
   const q = {
     underwear: quantities.underwear != null ? Number(quantities.underwear) : defaults.underwear,
     socks: quantities.socks != null ? Number(quantities.socks) : defaults.socks,
-    tops: quantities.tops != null ? Number(quantities.tops) : defaults.tops,
+    tshirts: quantities.tshirts != null ? Number(quantities.tshirts) : defaults.tshirts,
+    sweaters: quantities.sweaters != null ? Number(quantities.sweaters) : defaults.sweaters,
     bottoms: quantities.bottoms != null ? Number(quantities.bottoms) : defaults.bottoms,
   };
 
@@ -117,7 +122,8 @@ function generateItems({
     const label = travelerLabel(t, i, travelers.length);
     if (q.underwear > 0) add(`Ondergoed × ${q.underwear}${label}`, 'Kleding');
     if (q.socks > 0) add(`Sokken × ${q.socks}${label}`, 'Kleding');
-    if (q.tops > 0) add(`T-shirts / bovenstukken × ${q.tops}${label}`, 'Kleding');
+    if (q.tshirts > 0) add(`T-shirts × ${q.tshirts}${label}`, 'Kleding');
+    if (q.sweaters > 0) add(`Trui / vest × ${q.sweaters}${label}`, 'Kleding');
     if (q.bottoms > 0) add(`Broeken / rokken × ${q.bottoms}${label}`, 'Kleding');
     add(`Pyjama${label}`, 'Kleding');
     add(`Comfortabele schoenen${label}`, 'Kleding');
@@ -131,25 +137,20 @@ function generateItems({
     add('Lichte jas of vest voor airco / koelere avond', 'Kleding');
   }
   if (has('warm')) {
-    add('T-shirts (extra)', 'Kleding');
     add('Lichte lange broek', 'Kleding');
-    add('Vest voor de avond', 'Kleding');
     add('Lichte jas (avond / airco)', 'Kleding');
   }
   if (has('mild')) {
-    add('Trui of dikker vest', 'Kleding');
     add('Lange broek', 'Kleding');
     add('Lichte jas', 'Kleding');
   }
   if (has('cool')) {
-    add('Warme trui', 'Kleding');
     add('Tussenjas', 'Kleding');
     add('Lange broek', 'Kleding');
     add('Dikkere sokken', 'Kleding');
   }
   if (has('cold')) {
     add('Warme winterjas', 'Kleding');
-    add('Dikke trui', 'Kleding');
     add('Muts', 'Kleding');
     add('Sjaal', 'Kleding');
     add('Handschoenen', 'Kleding');

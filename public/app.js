@@ -3,14 +3,12 @@
 const ACTIVITIES = [
   { value: 'beach', label: 'Strand' },
   { value: 'pool', label: 'Zwembad' },
-  { value: 'swimming', label: 'Zwemmen' },
   { value: 'watersport', label: 'Watersport / snorkelen' },
   { value: 'hiking', label: 'Wandelen / hiken' },
   { value: 'cycling', label: 'Fietsen' },
   { value: 'skiing', label: 'Skiën / snowboarden' },
   { value: 'themepark', label: 'Attractiepark / pretpark' },
-  { value: 'citytrip', label: 'Stedentrip' },
-  { value: 'cultural', label: 'Cultuur / musea' },
+  { value: 'citytrip', label: 'Stedentrip / cultuur / musea' },
   { value: 'daytrip', label: 'Dagtrips / excursies' },
   { value: 'nightlife', label: 'Uitgaan / restaurants' },
 ];
@@ -126,9 +124,10 @@ function daysBetweenISO(start, end) {
 
 function defaultQuantities(days) {
   return {
-    underwear: Math.max(1, Math.min(days, 14)),
-    socks: Math.max(1, Math.min(days, 14)),
-    tops: Math.max(1, Math.min(Math.ceil(days / 1.5) - 1, 14)),
+    underwear: Math.max(2, Math.min(days + 1, 15)),
+    socks: Math.max(2, Math.min(days + 1, 15)),
+    tshirts: Math.max(2, Math.min(days + 1, 15)),
+    sweaters: Math.max(1, Math.min(Math.ceil(days / 4), 4)),
     bottoms: Math.max(1, Math.min(Math.ceil(days / 3) - 1, 7)),
   };
 }
@@ -302,13 +301,11 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit }) {
   let quantitiesSection = null;
   let qInputs = null;
   if (mode === 'create') {
-    let userTouched = { underwear: false, socks: false, tops: false, bottoms: false };
-    qInputs = {
-      underwear: el('input', { type: 'number', min: '0', max: '99' }),
-      socks: el('input', { type: 'number', min: '0', max: '99' }),
-      tops: el('input', { type: 'number', min: '0', max: '99' }),
-      bottoms: el('input', { type: 'number', min: '0', max: '99' }),
-    };
+    const Q_KEYS = ['underwear', 'socks', 'tshirts', 'sweaters', 'bottoms'];
+    const userTouched = Object.fromEntries(Q_KEYS.map(k => [k, false]));
+    qInputs = Object.fromEntries(Q_KEYS.map(k =>
+      [k, el('input', { type: 'number', min: '0', max: '99' })]
+    ));
     Object.entries(qInputs).forEach(([k, inp]) => {
       inp.addEventListener('input', () => { userTouched[k] = true; });
     });
@@ -316,7 +313,7 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit }) {
     function applyDefaults() {
       const days = daysBetweenISO(startIn.value, endIn.value);
       const def = defaultQuantities(days);
-      for (const k of ['underwear', 'socks', 'tops', 'bottoms']) {
+      for (const k of Q_KEYS) {
         if (!userTouched[k]) qInputs[k].value = def[k];
       }
     }
@@ -326,15 +323,16 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit }) {
 
     quantitiesSection = el('div', { class: 'card' },
       el('h2', { style: 'margin-top: 0' }, 'Hoeveelheid kleding per persoon'),
-      el('p', { class: 'muted', style: 'margin-top: 0' }, 'Suggesties op basis van de reisduur — pas aan naar wens. Op 0 zetten = niet meenemen.'),
+      el('p', { class: 'muted', style: 'margin-top: 0' }, 'Suggesties op basis van de reisduur — pas aan naar wens. Op 0 zetten = niet meenemen. Ondergoed/sokken/t-shirts hebben 1 reservestuk meegerekend.'),
       el('div', { class: 'row cols-2' },
         el('div', { class: 'field' }, el('label', {}, 'Ondergoed'), qInputs.underwear),
         el('div', { class: 'field' }, el('label', {}, 'Sokken'), qInputs.socks),
       ),
       el('div', { class: 'row cols-2' },
-        el('div', { class: 'field' }, el('label', {}, 'T-shirts / bovenstukken'), qInputs.tops),
-        el('div', { class: 'field' }, el('label', {}, 'Broeken / rokken'), qInputs.bottoms),
+        el('div', { class: 'field' }, el('label', {}, 'T-shirts'), qInputs.tshirts),
+        el('div', { class: 'field' }, el('label', {}, 'Trui / vest'), qInputs.sweaters),
       ),
+      el('div', { class: 'field' }, el('label', {}, 'Broeken / rokken'), qInputs.bottoms),
     );
   }
 
@@ -401,7 +399,8 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit }) {
         data.quantities = {
           underwear: qInputs.underwear.value,
           socks: qInputs.socks.value,
-          tops: qInputs.tops.value,
+          tshirts: qInputs.tshirts.value,
+          sweaters: qInputs.sweaters.value,
           bottoms: qInputs.bottoms.value,
         };
       }

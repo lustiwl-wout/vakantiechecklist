@@ -42,7 +42,7 @@ function cleanWeather(input) {
 function cleanQuantities(input) {
   if (!input || typeof input !== 'object') return {};
   const out = {};
-  for (const k of ['underwear', 'socks', 'tops', 'bottoms']) {
+  for (const k of ['underwear', 'socks', 'tshirts', 'sweaters', 'bottoms']) {
     if (input[k] !== undefined && input[k] !== '' && input[k] !== null) {
       const n = Number(input[k]);
       if (Number.isFinite(n) && n >= 0 && n <= 99) out[k] = Math.round(n);
