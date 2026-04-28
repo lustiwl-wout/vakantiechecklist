@@ -24,6 +24,7 @@ const WEATHER = [
   { value: 'mild', label: 'Mild' },
   { value: 'cold', label: 'Koud' },
   { value: 'rainy', label: 'Regenachtig' },
+  { value: 'mixed', label: 'Wisselvallig' },
 ];
 
 const ACCOMMODATION = [
@@ -223,12 +224,19 @@ async function renderDashboard() {
 function renderNew() {
   clear(app);
 
-  let travelers = [{ age: '' }];
+  let travelers = [{ name: '', age: '' }];
   const errBox = el('div', { class: 'error' });
 
   function paintTravelers(container) {
     clear(container);
     travelers.forEach((t, i) => {
+      const nameIn = el('input', {
+        type: 'text',
+        placeholder: 'Naam',
+        value: t.name,
+        maxlength: '60',
+        oninput: (e) => { travelers[i].name = e.target.value; },
+      });
       const ageIn = el('input', {
         type: 'number', min: '0', max: '120',
         placeholder: 'Leeftijd',
@@ -238,11 +246,12 @@ function renderNew() {
       const removeBtn = el('button', {
         type: 'button',
         class: 'btn btn-sm btn-ghost',
-        onclick: () => { travelers.splice(i, 1); if (!travelers.length) travelers.push({ age: '' }); paintTravelers(container); },
+        title: 'Verwijderen',
+        onclick: () => { travelers.splice(i, 1); if (!travelers.length) travelers.push({ name: '', age: '' }); paintTravelers(container); },
       }, '✕');
       container.append(
         el('div', { class: 'traveler' },
-          el('span', { class: 'muted', style: 'min-width: 90px' }, `Reiziger ${i + 1}`),
+          nameIn,
           ageIn,
           travelers.length > 1 ? removeBtn : null,
         )
@@ -252,7 +261,7 @@ function renderNew() {
       el('button', {
         type: 'button',
         class: 'btn btn-sm',
-        onclick: () => { travelers.push({ age: '' }); paintTravelers(container); },
+        onclick: () => { travelers.push({ name: '', age: '' }); paintTravelers(container); },
       }, '+ Reiziger toevoegen')
     );
   }
@@ -277,14 +286,24 @@ function renderNew() {
     )
   );
 
+  const medsIn = el('textarea', {
+    rows: '3',
+    placeholder: 'Eén medicijn per regel, bv.\nIbuprofen 400 mg\nOogdruppels',
+  });
+
   const form = el('form', {
     onsubmit: async (e) => {
       e.preventDefault();
       errBox.textContent = '';
       const checked = Array.from(activitiesBox.querySelectorAll('input:checked')).map(i => i.value);
       const cleanTravelers = travelers
-        .map(t => ({ age: t.age === '' ? null : Number(t.age) }))
+        .map(t => ({
+          name: (t.name || '').trim(),
+          age: t.age === '' ? null : Number(t.age),
+        }))
+        .filter(t => t.name || t.age != null)
         .filter(t => t.age == null || (Number.isFinite(t.age) && t.age >= 0));
+      const meds = medsIn.value.split('\n').map(s => s.trim()).filter(Boolean);
       try {
         const res = await api('/api/checklists', {
           method: 'POST',
@@ -298,6 +317,7 @@ function renderNew() {
             weather: weatherSel.value,
             accommodation: accomSel.value,
             activities: checked,
+            medications: meds,
           },
         });
         toast('Checklist aangemaakt');
@@ -356,6 +376,12 @@ function renderNew() {
     el('div', { class: 'card' },
       el('h2', { style: 'margin-top: 0' }, 'Geplande activiteiten'),
       activitiesBox,
+    ),
+
+    el('div', { class: 'card' },
+      el('h2', { style: 'margin-top: 0' }, 'Medicijnen'),
+      el('p', { class: 'muted', style: 'margin-top: 0' }, 'Welke medicijnen moeten mee? Eén per regel. Komen als losse items in de checklist.'),
+      medsIn,
     ),
 
     errBox,
@@ -466,23 +492,49 @@ async function renderChecklist(id) {
   }
 
   // Add item
+  const STANDARD_CATEGORIES = [
+    'Documenten', 'Geld', 'Elektronica', 'Kleding', 'Verzorging',
+    'Accommodatie', 'Activiteiten', 'Baby & kids', 'Transport', 'Overig',
+  ];
   const newItemIn = el('input', { type: 'text', placeholder: 'Item toevoegen…' });
+  const newItemCat = el('select', { 'aria-label': 'Categorie' });
+  let lastChosenCategory = null;
+
+  function paintCategoryOptions() {
+    const used = [...new Set(items.map(i => i.category).filter(Boolean))];
+    const all = [...new Set([...used, ...STANDARD_CATEGORIES])];
+    const prev = newItemCat.value || lastChosenCategory || 'Overig';
+    clear(newItemCat);
+    for (const cat of all) {
+      newItemCat.append(el('option', { value: cat, selected: cat === prev }, cat));
+    }
+  }
+  paintCategoryOptions();
+  newItemCat.addEventListener('change', () => { lastChosenCategory = newItemCat.value; });
+
   const addForm = el('form', {
     class: 'add-item',
     onsubmit: async (e) => {
       e.preventDefault();
       const text = newItemIn.value.trim();
       if (!text) return;
+      const category = newItemCat.value || 'Overig';
       try {
-        const res = await api(`/api/checklists/${c.id}/items`, { method: 'POST', body: { text } });
+        const res = await api(`/api/checklists/${c.id}/items`, {
+          method: 'POST',
+          body: { text, category },
+        });
         items.push(res.item);
         newItemIn.value = '';
+        lastChosenCategory = category;
+        paintCategoryOptions();
         paintItems();
         paintProgress();
       } catch (err) { toast(err.message); }
     },
   },
     newItemIn,
+    newItemCat,
     el('button', { type: 'submit', class: 'btn btn-primary' }, 'Toevoegen')
   );
 

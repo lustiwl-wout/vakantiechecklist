@@ -41,6 +41,7 @@ function generateItems({
   weather,
   accommodation,
   activities = [],
+  medications = [],
 }) {
   const items = [];
   const add = (text, category) => items.push({ text, category });
@@ -76,14 +77,17 @@ function generateItems({
   if (!home && !euro) add('Stekkeradapter (controleer type voor land)', 'Elektronica');
   if (days >= 4) add('Koptelefoon / oortjes', 'Elektronica');
 
-  // Kleding per reiziger (hoeveelheid afhankelijk van duur)
-  const undies = Math.min(days + 1, 14);
-  const tops = Math.min(Math.ceil(days / 1.5), 14);
-  const bottoms = Math.min(Math.ceil(days / 3), 7);
+  // Kleding per reiziger (hoeveelheid afhankelijk van duur).
+  // Je draagt op de vertrekdag al iets, dus eentje minder mee.
+  const undies = Math.max(1, Math.min(days, 14));
+  const tops = Math.max(1, Math.min(Math.ceil(days / 1.5) - 1, 14));
+  const bottoms = Math.max(1, Math.min(Math.ceil(days / 3) - 1, 7));
   travelers.forEach((t, i) => {
-    const label = travelers.length > 1
-      ? ` (reiziger ${i + 1}${t.age != null ? `, ${t.age} jr` : ''})`
-      : '';
+    const parts = [];
+    if (t.name && String(t.name).trim()) parts.push(String(t.name).trim());
+    else if (travelers.length > 1) parts.push(`reiziger ${i + 1}`);
+    if (t.age != null) parts.push(`${t.age} jr`);
+    const label = parts.length ? ` (${parts.join(', ')})` : '';
     add(`Ondergoed × ${undies}${label}`, 'Kleding');
     add(`Sokken × ${undies}${label}`, 'Kleding');
     add(`T-shirts / bovenstukken × ${tops}${label}`, 'Kleding');
@@ -118,6 +122,16 @@ function generateItems({
   if (weather === 'mild') {
     add('Vest / dunne trui', 'Kleding');
     add('Lichte jas', 'Kleding');
+  }
+  if (weather === 'mixed') {
+    add('Regenjas', 'Kleding');
+    add('Paraplu', 'Kleding');
+    add('Vest / dunne trui', 'Kleding');
+    add('Lichte jas', 'Kleding');
+    add('Lange broek', 'Kleding');
+    add('Korte broek', 'Kleding');
+    add('Laagjes (lange en korte mouw)', 'Kleding');
+    add('Waterdichte schoenen / stevige schoenen', 'Kleding');
   }
 
   // Accommodatie
@@ -191,7 +205,14 @@ function generateItems({
   add('Shampoo / douchegel', 'Verzorging');
   add('Deodorant', 'Verzorging');
   add('Haarborstel / kam', 'Verzorging');
-  add('Persoonlijke medicijnen', 'Verzorging');
+  const meds = (medications || [])
+    .map(m => String(m || '').trim())
+    .filter(Boolean);
+  if (meds.length) {
+    for (const m of meds) add(`Medicijn: ${m}`, 'Verzorging');
+  } else {
+    add('Persoonlijke medicijnen', 'Verzorging');
+  }
   add('EHBO / pleisters / paracetamol', 'Verzorging');
   if (days >= 7) add('Nagelknipper', 'Verzorging');
   if (hasSenior) add('Extra medicatie + recepten', 'Verzorging');

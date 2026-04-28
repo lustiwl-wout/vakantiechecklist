@@ -260,7 +260,8 @@ input:focus, select:focus, textarea:focus {
   gap: 8px;
   margin-bottom: 8px;
 }
-.travelers .traveler input { flex: 1; }
+.travelers .traveler input[type="text"] { flex: 2 1 0; min-width: 0; }
+.travelers .traveler input[type="number"] { flex: 1 1 80px; min-width: 0; max-width: 110px; }
 
 /* Checklist view */
 .checklist-head {
@@ -279,8 +280,11 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   gap: 8px;
   margin: 12px 0;
+  flex-wrap: wrap;
 }
-.add-item input { flex: 1; }
+.add-item input { flex: 1 1 180px; min-width: 0; }
+.add-item select { flex: 0 1 160px; }
+.add-item button { flex: 0 0 auto; }
 
 .category-group { margin-bottom: 20px; }
 .category-group h2 {

@@ -31,6 +31,7 @@ router.post('/', async (req, res) => {
     weather,
     accommodation,
     activities,
+    medications,
   } = req.body || {};
 
   if (!name || !String(name).trim()) {
@@ -39,12 +40,18 @@ router.post('/', async (req, res) => {
 
   const cleanTravelers = Array.isArray(travelers)
     ? travelers
-        .map(t => ({ age: t && t.age != null && t.age !== '' ? Number(t.age) : null }))
+        .map(t => ({
+          name: t && typeof t.name === 'string' ? t.name.trim().slice(0, 60) : '',
+          age: t && t.age != null && t.age !== '' ? Number(t.age) : null,
+        }))
         .filter(t => t.age == null || (Number.isFinite(t.age) && t.age >= 0 && t.age <= 120))
     : [];
-  if (cleanTravelers.length === 0) cleanTravelers.push({ age: null });
+  if (cleanTravelers.length === 0) cleanTravelers.push({ name: '', age: null });
 
   const cleanActivities = Array.isArray(activities) ? activities.map(String) : [];
+  const cleanMedications = Array.isArray(medications)
+    ? medications.map(m => String(m || '').trim()).filter(Boolean).slice(0, 50)
+    : [];
 
   const client = await pool.connect();
   try {
@@ -77,6 +84,7 @@ router.post('/', async (req, res) => {
       weather,
       accommodation,
       activities: cleanActivities,
+      medications: cleanMedications,
     });
 
     if (generated.length) {
