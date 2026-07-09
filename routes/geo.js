@@ -333,6 +333,22 @@ const LODGING_NAME_RE = /groepsaccommodatie|groepsverblijf|vakantiehuis|vakantie
 const ATTRACTION_NAME_BLOCK = /manege|ruitersport|partycentrum|zalencentrum|feestzaal|kinderopvang|kinderdagverblijf/i;
 const WATERPARK_NAME_BLOCK = /zwemschool|zwemles|sportcentrum|sporthal|sportschool/i;
 
+// Een naam die alleen een soortnaam is ("PARK", "Zwembad", "Museum") is
+// vrijwel altijd data-vervuiling of een verkeerd getagd bedrijf — echte
+// uitjes hebben een eigen naam. Alleen toestaan met wiki-bewijs.
+const GENERIC_NAMES = new Set([
+  'park', 'pretpark', 'attractiepark', 'speeltuin', 'speelpark',
+  'zwembad', 'bosbad', 'waterpark', 'museum', 'strand', 'beach',
+  'restaurant', 'café', 'cafe', 'dierentuin', 'zoo', 'aquarium',
+  'kinderboerderij', 'speelparadijs', 'binnenspeeltuin', 'natuurgebied', 'bos',
+]);
+
+function hasGenericName(name, t) {
+  const n = name.trim().toLowerCase();
+  if (n.length < 3 || GENERIC_NAMES.has(n)) return !(t.wikipedia || t.wikidata);
+  return false;
+}
+
 function isLodging(cat, name, t) {
   // Nationale parken en hotel-zwemparadijzen met dagkaarten (De Bonte
   // Wever, Preston Palace — herkenbaar aan hun wiki-vermelding) zijn
@@ -350,6 +366,7 @@ function isLodging(cat, name, t) {
 function isValidNearbyPoi(cat, name, t) {
   if (!cat || !name) return false;
   if (t.memorialArt) return false;
+  if (hasGenericName(name, t)) return false;
   if (isLodging(cat, name, t)) return false;
 
   if (cat === 'attraction') {
@@ -440,7 +457,7 @@ router.get('/reverse', async (req, res) => {
 });
 
 function nearbyKey(lat, lng) {
-  return `nearby:v8:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+  return `nearby:v9:${lat.toFixed(2)}:${lng.toFixed(2)}`;
 }
 
 // Haalt omgevingsdata live op bij Overpass en schrijft hem in de cache.
