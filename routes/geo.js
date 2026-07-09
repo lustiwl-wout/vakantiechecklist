@@ -241,6 +241,23 @@ function classify(el) {
   return null;
 }
 
+function isValidNearbyPoi(cat, tags) {
+  if (!cat || !tags.name) return false;
+  if (cat !== 'attraction') return true;
+  if (tags.artwork_type || tags.memorial || tags['memorial:type'] || tags.tourism === 'artwork') {
+    return false;
+  }
+  return Boolean(
+    tags.website
+    || tags['contact:website']
+    || tags.wikipedia
+    || tags.wikidata
+    || tags.historic
+    || tags.heritage
+    || tags['heritage:operator']
+  );
+}
+
 // ---- routes ----
 
 router.get('/search', async (req, res) => {
@@ -306,7 +323,7 @@ router.get('/reverse', async (req, res) => {
 });
 
 function nearbyKey(lat, lng) {
-  return `nearby:v3:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+  return `nearby:v4:${lat.toFixed(2)}:${lng.toFixed(2)}`;
 }
 
 // Haalt omgevingsdata live op bij Overpass en schrijft hem in de cache.
@@ -334,7 +351,7 @@ async function fetchNearbyLive(lat, lng) {
       continue;
     }
     const cat = classify(el);
-    if (!cat || !tags.name) continue;
+    if (!isValidNearbyPoi(cat, tags)) continue;
     const plat = el.lat ?? (el.center && el.center.lat);
     const plng = el.lon ?? (el.center && el.center.lon);
     if (plat == null) continue;
