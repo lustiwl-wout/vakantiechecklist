@@ -43,11 +43,24 @@ const ACCOMMODATION = [
 ];
 
 const STANDARD_CATEGORIES = [
-  'Documenten', 'Geld', 'Elektronica', 'Kleding', 'Verzorging',
-  'Accommodatie', 'Activiteiten', 'Baby & kids', 'Transport', 'Overig',
+  'Documenten', 'Geld', 'Elektronica', 'Kleding', 'Verzorging', 'Reisapotheek',
+  'Accommodatie', 'Activiteiten', 'Baby & kids', 'Transport', 'Overig', 'Voor vertrek',
 ];
 
 const CATEGORY_ORDER = STANDARD_CATEGORIES;
+
+// Landenlijst wordt één keer opgehaald en gedeeld tussen views.
+let countriesCache = null;
+async function getCountries() {
+  if (countriesCache) return countriesCache;
+  try {
+    const res = await api('/api/meta/countries');
+    countriesCache = res.countries;
+  } catch {
+    countriesCache = [];
+  }
+  return countriesCache;
+}
 
 const app = document.getElementById('app');
 const navEl = document.getElementById('nav');
@@ -94,6 +107,12 @@ async function api(path, opts = {}) {
   let data = null;
   try { data = await res.json(); } catch {}
   if (!res.ok) {
+    // Sessie verlopen: terug naar het inlogscherm in plaats van losse
+    // foutmeldingen bij elke actie.
+    if (res.status === 401 && location.hash !== '#/login') {
+      currentUser = null;
+      navigate('#/login');
+    }
     const err = new Error((data && data.error) || `Fout ${res.status}`);
     err.status = res.status;
     throw err;
@@ -110,9 +129,13 @@ function fmtDate(d) {
 
 function isoDateOnly(d) {
   if (!d) return '';
+  // De server geeft DATE-kolommen als 'YYYY-MM-DD'-string — direct gebruiken,
+  // dan kan er geen tijdzone-verschuiving optreden.
+  if (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10);
   const dt = new Date(d);
   if (isNaN(dt)) return '';
-  return dt.toISOString().slice(0, 10);
+  const pad = n => String(n).padStart(2, '0');
+  return `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-${pad(dt.getDate())}`;
 }
 
 function daysBetweenISO(start, end) {
@@ -148,7 +171,7 @@ function renderNav() {
 }
 
 async function logout() {
-  await api('/api/auth/logout', { method: 'POST' });
+  try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
   currentUser = null;
   navigate('#/login');
 }
@@ -255,7 +278,7 @@ async function renderDashboard() {
 
 // ---------- shared form (create + edit) ----------
 
-function buildChecklistForm({ initial = {}, mode = 'create', onSubmit }) {
+function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries: countryList = [] }) {
   const errBox = el('div', { class: 'error' });
 
   const initTravelers = (initial.travelers && initial.travelers.length)
@@ -263,10 +286,18 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit }) {
     : [{ name: '', age: '' }];
   let travelers = initTravelers;
 
+  const countries = countryList;
   const nameIn = el('input', { type: 'text', required: true, placeholder: 'Bv. Zomervakantie Spanje', value: initial.name || '' });
-  const destIn = el('input', { type: 'text', placeholder: 'Bv. Spanje', value: initial.destination || '' });
+  const countrySel = el('select', {},
+    el('option', { value: '' }, '— Kies land —'),
+    ...countries.map(cn =>
+      el('option', { value: cn.code, selected: cn.code === (initial.country || '') }, cn.name)
+    )
+  );
+  const destIn = el('input', { type: 'text', placeholder: 'Plaats / regio (optioneel)', value: initial.destination || '' });
   const startIn = el('input', { type: 'date', value: isoDateOnly(initial.startDate) });
   const endIn = el('input', { type: 'date', value: isoDateOnly(initial.endDate) });
+  const rentalIn = el('input', { type: 'checkbox', checked: initial.rentalCar === true });
 
   const transportSel = el('select', {}, ...TRANSPORT.map(o =>
     el('option', { value: o.value, selected: o.value === (initial.transport || '') }, o.label)
@@ -383,9 +414,14 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit }) {
       const cleanTravelers = travelers
         .map(t => ({ name: (t.name || '').trim(), age: t.age === '' ? null : Number(t.age) }))
         .filter(t => t.name || t.age != null);
+      if (startIn.value && endIn.value && endIn.value < startIn.value) {
+        errBox.textContent = 'De terugkomstdatum ligt vóór de vertrekdatum.';
+        return;
+      }
       const data = {
         name: nameIn.value,
         destination: destIn.value,
+        country: countrySel.value,
         startDate: startIn.value,
         endDate: endIn.value,
         travelers: cleanTravelers,
@@ -393,6 +429,7 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit }) {
         weather: checkedWeather,
         accommodation: accomSel.value,
         activities: checked,
+        rentalCar: rentalIn.checked,
       };
       if (mode === 'create') {
         data.medications = medsIn.value.split('\n').map(s => s.trim()).filter(Boolean);
@@ -404,8 +441,18 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit }) {
           bottoms: qInputs.bottoms.value,
         };
       }
+      // Dubbelklik-bescherming: op de gratis Render-tier kan een request
+      // lang duren; knop uit tot het antwoord er is.
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Bezig…'; }
       try { await onSubmit(data); }
       catch (err) { errBox.textContent = err.message; }
+      finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = mode === 'create' ? 'Checklist aanmaken' : 'Wijzigingen opslaan';
+        }
+      }
     },
   },
     el('h1', {}, mode === 'create' ? 'Nieuwe checklist' : 'Checklist bewerken'),
@@ -416,16 +463,23 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit }) {
     el('div', { class: 'card spaced' },
       el('div', { class: 'field' }, el('label', {}, 'Naam van de reis *'), nameIn),
       el('div', { class: 'row cols-2' },
-        el('div', { class: 'field' }, el('label', {}, 'Bestemming (land)'), destIn),
-        el('div', { class: 'field' }, el('label', {}, 'Transport'), transportSel),
+        el('div', { class: 'field' }, el('label', {}, 'Land'), countrySel),
+        el('div', { class: 'field' }, el('label', {}, 'Plaats / regio'), destIn),
       ),
       el('div', { class: 'row cols-2' },
         el('div', { class: 'field' }, el('label', {}, 'Vertrekdatum'), startIn),
         el('div', { class: 'field' }, el('label', {}, 'Terugkomstdatum'), endIn),
       ),
-      el('div', { class: 'field' },
-        el('label', {}, 'Accommodatie'),
-        accomSel,
+      el('div', { class: 'row cols-2' },
+        el('div', { class: 'field' }, el('label', {}, 'Transport'), transportSel),
+        el('div', { class: 'field' },
+          el('label', {}, 'Accommodatie'),
+          accomSel,
+        ),
+      ),
+      el('label', { class: 'checkbox-inline' },
+        rentalIn,
+        ' Huurauto op de bestemming'
       ),
     ),
 
@@ -463,10 +517,14 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit }) {
   return form;
 }
 
-function renderNew() {
+async function renderNew() {
+  clear(app);
+  app.append(el('p', { class: 'loading' }, 'Laden…'));
+  const countries = await getCountries();
   clear(app);
   app.append(buildChecklistForm({
     mode: 'create',
+    countries,
     initial: {},
     onSubmit: async (data) => {
       const res = await api('/api/checklists', { method: 'POST', body: data });
@@ -479,9 +537,10 @@ function renderNew() {
 async function renderEdit(id) {
   clear(app);
   app.append(el('p', { class: 'loading' }, 'Laden…'));
-  let data;
-  try { data = await api(`/api/checklists/${id}`); }
-  catch (err) {
+  let data, countries;
+  try {
+    [data, countries] = await Promise.all([api(`/api/checklists/${id}`), getCountries()]);
+  } catch (err) {
     if (err.status === 401) return navigate('#/login');
     return showError(err);
   }
@@ -489,10 +548,12 @@ async function renderEdit(id) {
   clear(app);
   app.append(buildChecklistForm({
     mode: 'edit',
+    countries,
     initial: {
       id: c.id,
       name: c.name,
       destination: c.destination,
+      country: c.country,
       startDate: c.start_date,
       endDate: c.end_date,
       travelers: c.travelers,
@@ -500,11 +561,14 @@ async function renderEdit(id) {
       weather: c.weather,
       accommodation: c.accommodation,
       activities: c.activities,
+      rentalCar: c.rental_car,
     },
     onSubmit: async (formData) => {
       const res = await api(`/api/checklists/${id}`, { method: 'PATCH', body: formData });
-      if (res.suggestions && res.suggestions.length) {
-        renderSuggestions(id, res.suggestions);
+      const sug = res.suggestions || [];
+      const rem = res.removals || [];
+      if (sug.length || rem.length) {
+        renderSuggestions(id, sug, rem);
       } else {
         toast('Wijzigingen opgeslagen');
         navigate(`#/list/${id}`);
@@ -514,52 +578,80 @@ async function renderEdit(id) {
 }
 
 // Na het bewerken van reisgegevens: laat de gebruiker kiezen welke nieuwe
-// suggesties van de generator aan de lijst worden toegevoegd.
-function renderSuggestions(id, suggestions) {
+// suggesties worden toegevoegd en welke overbodig geworden items van de
+// lijst mogen.
+function renderSuggestions(id, suggestions, removals = []) {
   clear(app);
 
-  const boxes = [];
-  const groups = {};
-  for (const s of suggestions) {
-    (groups[s.category || 'Overig'] = groups[s.category || 'Overig'] || []).push(s);
-  }
-
-  const listWrap = el('div', {});
-  for (const [cat, list] of Object.entries(groups)) {
-    const ul = el('ul', { class: 'item-list' });
-    for (const s of list) {
-      const cb = el('input', { type: 'checkbox', checked: true });
-      boxes.push({ cb, item: s });
-      const label = s.quantity > 1 ? `${s.text} (× ${s.quantity})` : s.text;
-      ul.append(el('li', { class: 'item' },
-        cb,
-        el('span', { class: 'text', onclick: () => { cb.checked = !cb.checked; } }, label),
-      ));
+  function buildSection(entries, defaultChecked) {
+    const boxes = [];
+    const wrap = el('div', {});
+    const groups = {};
+    for (const s of entries) {
+      (groups[s.category || 'Overig'] = groups[s.category || 'Overig'] || []).push(s);
     }
-    listWrap.append(el('div', { class: 'category-group' }, el('h2', {}, cat), ul));
+    for (const [cat, list] of Object.entries(groups)) {
+      const ul = el('ul', { class: 'item-list' });
+      for (const s of list) {
+        const cb = el('input', { type: 'checkbox', checked: defaultChecked });
+        boxes.push({ cb, item: s });
+        const label = s.quantity > 1 ? `${s.text} (× ${s.quantity})` : s.text;
+        ul.append(el('li', { class: 'item' },
+          cb,
+          el('span', { class: 'text', onclick: () => { cb.checked = !cb.checked; } },
+            label,
+            s.is_checked ? el('span', { class: 'muted' }, ' — al ingepakt!') : null,
+          ),
+        ));
+      }
+      wrap.append(el('div', { class: 'category-group' }, el('h2', {}, cat), ul));
+    }
+    return { boxes, wrap };
   }
 
-  const addBtn = el('button', { class: 'btn btn-primary' }, 'Geselecteerde items toevoegen');
-  addBtn.addEventListener('click', async () => {
-    const chosen = boxes.filter(b => b.cb.checked).map(b => b.item);
+  const addSection = suggestions.length ? buildSection(suggestions, true) : null;
+  const removeSection = removals.length ? buildSection(removals, true) : null;
+
+  const applyBtn = el('button', { class: 'btn btn-primary' }, 'Wijzigingen doorvoeren');
+  applyBtn.addEventListener('click', async () => {
+    applyBtn.disabled = true;
     try {
-      if (chosen.length) {
-        await api(`/api/checklists/${id}/items/bulk`, { method: 'POST', body: { items: chosen } });
-        toast(`${chosen.length} item${chosen.length === 1 ? '' : 's'} toegevoegd`);
+      const toAdd = addSection ? addSection.boxes.filter(b => b.cb.checked).map(b => b.item) : [];
+      const toRemove = removeSection ? removeSection.boxes.filter(b => b.cb.checked).map(b => b.item.id) : [];
+      if (toAdd.length) {
+        await api(`/api/checklists/${id}/items/bulk`, { method: 'POST', body: { items: toAdd } });
       }
+      if (toRemove.length) {
+        // remember=false: komen de plannen weer terug, dan mag de generator
+        // deze items opnieuw voorstellen.
+        await api(`/api/checklists/${id}/items/bulk-delete`, {
+          method: 'POST', body: { ids: toRemove, remember: false },
+        });
+      }
+      const parts = [];
+      if (toAdd.length) parts.push(`${toAdd.length} toegevoegd`);
+      if (toRemove.length) parts.push(`${toRemove.length} verwijderd`);
+      if (parts.length) toast(parts.join(', '));
       navigate(`#/list/${id}`);
-    } catch (err) { toast(err.message); }
+    } catch (err) {
+      applyBtn.disabled = false;
+      toast(err.message);
+    }
   });
 
   app.append(
-    el('h1', {}, 'Nieuwe suggesties'),
+    el('h1', {}, 'Lijst bijwerken?'),
     el('p', { class: 'muted' },
-      'Op basis van je gewijzigde reisgegevens stellen we deze items voor. ',
-      'Vink uit wat je niet wilt — bestaande items op je lijst blijven ongewijzigd.'),
-    listWrap,
+      'Op basis van je gewijzigde reisgegevens stellen we het volgende voor. ',
+      'Vink uit wat je niet wilt — de rest van je lijst blijft ongewijzigd.'),
+    addSection ? el('h2', {}, `Toevoegen (${suggestions.length})`) : null,
+    addSection ? addSection.wrap : null,
+    removeSection ? el('h2', { class: 'removal-heading' }, `Niet meer nodig (${removals.length})`) : null,
+    removeSection ? el('p', { class: 'muted' }, 'Deze items horen bij je oude reisgegevens. Aangevinkt = van de lijst halen.') : null,
+    removeSection ? removeSection.wrap : null,
     el('div', { class: 'actions' },
       el('a', { href: `#/list/${id}`, class: 'btn' }, 'Overslaan'),
-      addBtn,
+      applyBtn,
     ),
   );
 }
@@ -586,6 +678,17 @@ async function renderChecklist(id) {
   const c = data.checklist;
   let items = data.items;
 
+  // Alle bekende reizigersnamen: uit het reizigers-formulier + uit items.
+  function allTravelerNames() {
+    const names = (Array.isArray(c.travelers) ? c.travelers : [])
+      .map((t, i) => (t.name && t.name.trim()) || (c.travelers.length > 1 ? `Reiziger ${i + 1}` : null))
+      .filter(Boolean);
+    for (const n of new Set(items.map(i => i.traveler).filter(Boolean))) {
+      if (!names.includes(n)) names.push(n);
+    }
+    return names;
+  }
+
   // Filter op reiziger: null = alles, '__shared__' = gedeelde items, anders de naam.
   let activeTraveler = null;
 
@@ -607,6 +710,8 @@ async function renderChecklist(id) {
           activeTraveler = value;
           chips.querySelectorAll('.chip').forEach(x => x.classList.remove('active'));
           btn.classList.add('active');
+          // 'Voor wie?' in het toevoeg-formulier volgt de actieve tab.
+          newItemTrav.value = (value && value !== '__shared__') ? value : '';
           paintItems();
         },
       }, label);
@@ -791,36 +896,59 @@ async function renderChecklist(id) {
     return li;
   }
 
+  // Editor onder het item: tekst, voor wie, categorie.
   function startInlineEdit(textSpan, item) {
-    if (textSpan.querySelector('input')) return;
-    const input = el('input', { type: 'text', value: item.text });
-    const original = item.text;
-    clear(textSpan);
-    textSpan.append(input);
-    input.focus();
-    input.select();
-    let done = false;
-    const finish = async (save) => {
-      if (done) return;
-      done = true;
-      const newText = input.value.trim();
-      if (!save || !newText || newText === original) {
-        textSpan.textContent = original;
-        return;
-      }
-      try {
-        await api(`/api/items/${item.id}`, { method: 'PATCH', body: { text: newText } });
-        item.text = newText;
-        textSpan.textContent = newText;
-      } catch (err) {
-        toast(err.message);
-        textSpan.textContent = original;
-      }
-    };
-    input.addEventListener('blur', () => finish(true));
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
-      if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    const li = textSpan.closest('li');
+    if (!li || li.querySelector('.item-editor')) return;
+
+    const textIn = el('input', { type: 'text', value: item.text, maxlength: '200' });
+    const travSel = el('select', {},
+      el('option', { value: '', selected: !item.traveler }, 'Gedeeld'),
+      ...allTravelerNames().map(n =>
+        el('option', { value: n, selected: item.traveler === n }, n)),
+    );
+    const catSel = el('select', {},
+      ...[...new Set([...items.map(i => i.category).filter(Boolean), ...STANDARD_CATEGORIES])]
+        .map(cat => el('option', { value: cat, selected: cat === item.category }, cat)),
+    );
+
+    const editor = el('li', { class: 'item-editor no-print' },
+      el('div', { class: 'field' }, el('label', {}, 'Item'), textIn),
+      el('div', { class: 'row cols-2' },
+        el('div', { class: 'field' }, el('label', {}, 'Voor wie'), travSel),
+        el('div', { class: 'field' }, el('label', {}, 'Categorie'), catSel),
+      ),
+      el('div', { class: 'actions' },
+        el('button', { type: 'button', class: 'btn btn-sm', onclick: () => editor.remove() }, 'Annuleren'),
+        el('button', {
+          type: 'button', class: 'btn btn-sm btn-primary',
+          onclick: async (e) => {
+            e.target.disabled = true;
+            try {
+              const res = await api(`/api/items/${item.id}`, {
+                method: 'PATCH',
+                body: {
+                  text: textIn.value.trim() || item.text,
+                  traveler: travSel.value || null,
+                  category: catSel.value,
+                },
+              });
+              Object.assign(item, res.item);
+              paintItems();
+              paintProgress();
+            } catch (err) {
+              e.target.disabled = false;
+              toast(err.message);
+            }
+          },
+        }, 'Opslaan'),
+      ),
+    );
+    li.after(editor);
+    textIn.focus();
+    textIn.select();
+    textIn.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); editor.remove(); }
     });
   }
 
@@ -854,6 +982,10 @@ async function renderChecklist(id) {
   const newItemIn = el('input', { type: 'text', placeholder: 'Item toevoegen…' });
   const newItemQty = el('input', { type: 'number', min: '1', max: '99', value: '1', 'aria-label': 'Aantal', class: 'qty-input', title: 'Aantal' });
   const newItemCat = el('select', { 'aria-label': 'Categorie' });
+  const newItemTrav = el('select', { 'aria-label': 'Voor wie', title: 'Voor wie?' },
+    el('option', { value: '' }, 'Gedeeld'),
+    ...allTravelerNames().map(n => el('option', { value: n }, n)),
+  );
   let lastChosenCategory = null;
 
   function paintCategoryOptions() {
@@ -876,8 +1008,7 @@ async function renderChecklist(id) {
       if (!text) return;
       const category = newItemCat.value || 'Overig';
       const quantity = Math.max(1, Math.min(99, Number(newItemQty.value) || 1));
-      // Met een reiziger-tab actief hoort een nieuw item bij die reiziger.
-      const traveler = (activeTraveler && activeTraveler !== '__shared__') ? activeTraveler : undefined;
+      const traveler = newItemTrav.value || undefined;
       try {
         const res = await api(`/api/checklists/${c.id}/items`, {
           method: 'POST', body: { text, category, quantity, traveler },
@@ -892,7 +1023,7 @@ async function renderChecklist(id) {
       } catch (err) { toast(err.message); }
     },
   },
-    newItemIn, newItemQty, newItemCat,
+    newItemIn, newItemQty, newItemTrav, newItemCat,
     el('button', { type: 'submit', class: 'btn btn-primary' }, 'Toevoegen')
   );
 
@@ -929,6 +1060,7 @@ async function renderChecklist(id) {
             if (!confirm(`Checklist "${c.name}" verwijderen? Dit kan niet ongedaan gemaakt worden.`)) return;
             try {
               await api(`/api/checklists/${c.id}`, { method: 'DELETE' });
+              try { localStorage.removeItem(collapseKey); } catch {}
               toast('Checklist verwijderd');
               navigate('#/');
             } catch (err) { toast(err.message); }

@@ -8,9 +8,11 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
+const { rateLimit } = require('../ratelimit');
 
 const router = express.Router();
 const ADMIN_COOKIE = 'vc_admin';
+const adminLoginLimiter = rateLimit({ name: 'admin-login', max: 10, windowMs: 15 * 60 * 1000 });
 
 function safeEq(a, b) {
   const ha = crypto.createHash('sha256').update(String(a)).digest();
@@ -50,7 +52,7 @@ function loginPage(error) {
   `);
 }
 
-router.post('/login', (req, res) => {
+router.post('/login', adminLoginLimiter, (req, res) => {
   const u = String(req.body.user || '');
   const p = String(req.body.password || '');
   if (safeEq(u, process.env.ADMIN_USER) && safeEq(p, process.env.ADMIN_PASSWORD)) {
@@ -131,7 +133,7 @@ router.get('/', async (req, res) => {
           <input type="password" name="password" placeholder="Nieuw wachtwoord (min. 8)" minlength="8" required>
           <button class="primary" type="submit">Reset</button>
         </form>
-        <form method="post" action="/admin/delete" onsubmit="return confirm('Gebruiker ${esc(u.email)} en al zijn lijsten definitief verwijderen?')">
+        <form method="post" action="/admin/delete" onsubmit="return confirm('Deze gebruiker en al zijn lijsten definitief verwijderen?')">
           <input type="hidden" name="id" value="${u.id}">
           <button class="danger" type="submit">Verwijder</button>
         </form>

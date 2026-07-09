@@ -47,15 +47,20 @@ router.patch('/:id', async (req, res) => {
   }
 
   const text = (typeof req.body.text === 'string' && req.body.text.trim())
-    ? req.body.text.trim() : item.text;
+    ? req.body.text.trim().slice(0, 200) : item.text;
   const category = (typeof req.body.category === 'string' && req.body.category)
-    ? req.body.category : item.category;
+    ? String(req.body.category).slice(0, 60) : item.category;
+  let traveler = item.traveler;
+  if ('traveler' in req.body) {
+    traveler = (typeof req.body.traveler === 'string' && req.body.traveler.trim())
+      ? req.body.traveler.trim().slice(0, 60) : null;
+  }
 
   const { rows } = await pool.query(
-    `UPDATE items SET quantity = $1, packed = $2, is_checked = $3, text = $4, category = $5
-      WHERE id = $6
-      RETURNING id, text, category, is_checked, position, quantity, packed`,
-    [quantity, packed, isChecked, text, category, item.id]
+    `UPDATE items SET quantity = $1, packed = $2, is_checked = $3, text = $4, category = $5, traveler = $6
+      WHERE id = $7
+      RETURNING id, text, category, is_checked, position, quantity, packed, traveler`,
+    [quantity, packed, isChecked, text, category, traveler, item.id]
   );
   res.json({ ok: true, item: rows[0] });
 });
@@ -64,6 +69,18 @@ router.delete('/:id', async (req, res) => {
   const item = await loadOwnedItem(req.userId, req.params.id);
   if (!item) return res.status(404).json({ error: 'Item niet gevonden' });
   await pool.query('DELETE FROM items WHERE id = $1', [item.id]);
+  // Onthoud bewust verwijderde items zodat de generator ze bij een
+  // latere bewerking niet opnieuw voorstelt.
+  await pool.query(
+    `UPDATE checklists SET removed_texts = (
+       SELECT COALESCE(jsonb_agg(DISTINCT t), '[]'::jsonb) FROM (
+         SELECT jsonb_array_elements_text(removed_texts) AS t
+         UNION
+         SELECT $2::text
+       ) sub)
+      WHERE id = $1`,
+    [item.checklist_id, item.text.trim().toLowerCase()]
+  );
   res.json({ ok: true });
 });
 

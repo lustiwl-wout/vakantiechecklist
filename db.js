@@ -1,4 +1,8 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// DATE-kolommen als 'YYYY-MM-DD'-string laten i.p.v. JS Date op lokale
+// middernacht: dat voorkomt een dag verschuiving op niet-UTC-servers.
+types.setTypeParser(types.builtins.DATE, v => v);
 
 // We stellen ssl expliciet in via de ssl-optie en strippen de ssl-params
 // uit de URL — anders geeft pg >= 8.16 een (onterechte) security warning
@@ -12,9 +16,13 @@ function poolConfig(url, max = 5) {
     u.searchParams.delete('channel_binding');
     clean = u.toString();
   } catch { /* geen geldige URL — laat pg zelf klagen */ }
+  // Certificaat-verificatie staat aan (Neon gebruikt publiek vertrouwde
+  // certificaten). PGSSL_NO_VERIFY=1 is de nooduitgang voor omgevingen
+  // met een eigen CA.
+  const verify = process.env.PGSSL_NO_VERIFY !== '1';
   return {
     connectionString: clean,
-    ssl: useSSL ? { rejectUnauthorized: false } : false,
+    ssl: useSSL ? { rejectUnauthorized: verify } : false,
     max,
   };
 }
@@ -89,6 +97,9 @@ async function init() {
     ALTER TABLE items ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE items ADD COLUMN IF NOT EXISTS packed INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE items ADD COLUMN IF NOT EXISTS traveler TEXT;
+    ALTER TABLE checklists ADD COLUMN IF NOT EXISTS country TEXT;
+    ALTER TABLE checklists ADD COLUMN IF NOT EXISTS rental_car BOOLEAN NOT NULL DEFAULT FALSE;
+    ALTER TABLE checklists ADD COLUMN IF NOT EXISTS removed_texts JSONB NOT NULL DEFAULT '[]';
   `);
   await convertLegacyData();
 }
@@ -123,6 +134,16 @@ async function convertLegacyData() {
         [name, cl.id]
       );
     }
+  }
+
+  // Vrije-tekst bestemming → landcode (best effort, alleen waar leeg).
+  const { guessCountry } = require('./countries');
+  const { rows: noCountry } = await pool.query(
+    "SELECT id, destination FROM checklists WHERE country IS NULL AND destination IS NOT NULL AND destination <> ''"
+  );
+  for (const cl of noCountry) {
+    const c = guessCountry(cl.destination);
+    if (c) await pool.query('UPDATE checklists SET country = $1 WHERE id = $2', [c.code, cl.id]);
   }
 }
 

@@ -348,13 +348,42 @@ textarea { min-height: 80px; resize: vertical; }
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 6px;
+  min-width: 40px;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
   font-size: 16px;
   line-height: 1;
+  flex-shrink: 0;
 }
 .item .icon-btn:hover { background: var(--surface-2); color: var(--text); }
 .item .icon-btn.delete:hover { background: var(--danger-soft); color: var(--danger); }
+
+/* Inline checkbox in formulieren (bv. huurauto) */
+.checkbox-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 15px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.checkbox-inline input { width: 20px; height: 20px; margin: 0; }
+
+/* Item-editor (tekst / voor wie / categorie) */
+.item-editor {
+  display: block;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.item-editor .actions { margin-top: 4px; }
+
+/* Verwijder-sectie in het suggestiescherm */
+.removal-heading { color: var(--danger); }
 
 /* Reiziger-filter */
 .chips {

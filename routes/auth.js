@@ -8,15 +8,20 @@ const {
   verifyPassword,
 } = require('../auth');
 
+const { rateLimit } = require('../ratelimit');
+
 const router = express.Router();
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const loginLimiter = rateLimit({ name: 'login', max: 10, windowMs: 15 * 60 * 1000 });
+const registerLimiter = rateLimit({ name: 'register', max: 5, windowMs: 60 * 60 * 1000 });
 
-router.post('/register', async (req, res) => {
+router.post('/register', registerLimiter, async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
   const password = String(req.body.password || '');
-  if (!EMAIL_RE.test(email)) return res.status(400).json({ error: 'Ongeldig e-mailadres' });
+  if (!EMAIL_RE.test(email) || email.length > 254) return res.status(400).json({ error: 'Ongeldig e-mailadres' });
   if (password.length < 8) return res.status(400).json({ error: 'Wachtwoord moet minimaal 8 tekens zijn' });
+  if (password.length > 100) return res.status(400).json({ error: 'Wachtwoord mag maximaal 100 tekens zijn' });
 
   try {
     const hash = await hashPassword(password);
@@ -33,9 +38,9 @@ router.post('/register', async (req, res) => {
   }
 });
 
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const email = String(req.body.email || '').trim().toLowerCase();
-  const password = String(req.body.password || '');
+  const password = String(req.body.password || '').slice(0, 100);
   const { rows } = await pool.query('SELECT id, email, password_hash FROM users WHERE email = $1', [email]);
   const user = rows[0];
   if (!user || !(await verifyPassword(password, user.password_hash))) {
