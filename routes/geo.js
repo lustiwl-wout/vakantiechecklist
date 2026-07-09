@@ -668,31 +668,28 @@ router.get('/debug', async (req, res) => {
   if (!c || q.length < 2) return res.status(400).json({ error: 'lat, lng en q zijn verplicht' });
 
   try {
-    const safe = q.replace(/[^\p{L}\p{N} \-']/gu, '');
-    // Eerst op tag-soort filteren (geïndexeerd), dan pas de naam-regex:
-    // een kale naam-zoektocht moet anders álle benoemde objecten in het
-    // gebied langs — rond de Randstad zijn dat er miljoenen (timeout).
-    // We zoeken dus alleen binnen de tag-soorten die de app kent.
-    const kinds = ['["tourism"]', '["leisure"]', '["zoo"]', '["amenity"="restaurant"]',
-      '["natural"="beach"]', '["boundary"="national_park"]'];
-    const sel = kinds.map(k => `nwr${k}["name"~"${safe}",i];`).join('\n  ');
-    const data = await overpassFetch(`[out:json][timeout:15][bbox:${bboxFor(c.lat, c.lng, 40)}];
-(
-  ${sel}
-);
-out center tags 25;`);
+    // Zoeken-op-naam via Nominatim: daar is die dienst voor gebouwd
+    // (naam-index, subseconde-antwoord) en extratags levert de OSM-tags.
+    // Overpass bleek hiervoor het verkeerde gereedschap: een naam-regex
+    // time-out zelfs met bbox en tag-voorfilters in dichte gebieden.
+    const [s, w, n, e] = bboxFor(c.lat, c.lng, 40).split(',');
+    const viewbox = `${w},${s},${e},${n}`; // Nominatim wil west,zuid,oost,noord
+    const data = await nominatimFetch(
+      `/search?format=jsonv2&limit=8&extratags=1&addressdetails=0&bounded=1&viewbox=${viewbox}&q=${encodeURIComponent(q)}`
+    );
 
-    const results = (data.elements || []).map(el => {
-      const tags = el.tags || {};
-      const la = el.lat ?? (el.center && el.center.lat) ?? null;
-      const lo = el.lon ?? (el.center && el.center.lon) ?? null;
+    const results = data.map(r => {
+      // Reconstrueer een tags-object zoals Overpass het zou geven:
+      // class/type is de hoofd-tag, extratags bevat de rest.
+      const name = r.name || String(r.display_name || '').split(',')[0];
+      const tags = { name, ...(r.extratags || {}) };
+      if (r.class && r.type) tags[r.class] = r.type;
       const cat = classify({ tags });
       const t = liteTags(tags);
-      const name = tags.name || '';
       return {
         name,
-        type: el.type,
-        distanceKm: la != null ? Math.round(haversineKm(c.lat, c.lng, la, lo) * 10) / 10 : null,
+        osm: `${r.osm_type}/${r.osm_id}`,
+        distanceKm: Math.round(haversineKm(c.lat, c.lng, Number(r.lat), Number(r.lon)) * 10) / 10,
         category: cat,
         verdict: {
           valid: cat ? isValidNearbyPoi(cat, name, t) : false,
@@ -704,7 +701,7 @@ out center tags 25;`);
         tags,
       };
     });
-    res.json({ query: q, around: c, count: results.length, results });
+    res.json({ source: 'debug-v2-nominatim', query: q, around: c, count: results.length, results });
   } catch (err) {
     res.status(502).json({ error: `Diagnose mislukt: ${err.message}` });
   }
