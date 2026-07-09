@@ -418,7 +418,7 @@ textarea { min-height: 80px; resize: vertical; }
   font-size: 15px;
 }
 .poi-list li:last-child { border-bottom: none; }
-.poi-name { flex: 1; min-width: 0; }
+.poi-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .poi-dist { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .poi-dismiss {
   min-height: 28px !important;

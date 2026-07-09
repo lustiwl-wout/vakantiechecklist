@@ -1500,7 +1500,7 @@ async function renderOmgeving(id) {
           }, '×'),
         ));
       }
-    }
+    };
 
     renderPoiList();
 
