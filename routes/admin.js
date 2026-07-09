@@ -1,13 +1,16 @@
-// Admin-portal op /admin, beveiligd met HTTP Basic Auth.
+// Admin-portal op /admin met een eigen inlogpagina.
 // Credentials komen uit de env vars ADMIN_USER en ADMIN_PASSWORD
 // (in Render in te stellen). Zonder die vars is het portal uitgeschakeld.
+// Na inloggen krijg je een aparte admin-cookie (JWT, 12 uur geldig).
 
 const crypto = require('crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 const { pool } = require('../db');
 
 const router = express.Router();
+const ADMIN_COOKIE = 'vc_admin';
 
 function safeEq(a, b) {
   const ha = crypto.createHash('sha256').update(String(a)).digest();
@@ -15,28 +18,64 @@ function safeEq(a, b) {
   return crypto.timingSafeEqual(ha, hb);
 }
 
-function adminAuth(req, res, next) {
-  const user = process.env.ADMIN_USER;
-  const pass = process.env.ADMIN_PASSWORD;
-  if (!user || !pass) {
-    return res.status(503).send('Admin-portal is uitgeschakeld. Zet de env vars ADMIN_USER en ADMIN_PASSWORD.');
+function isAdminSession(req) {
+  const token = req.cookies && req.cookies[ADMIN_COOKIE];
+  if (!token) return false;
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    return payload.role === 'admin';
+  } catch {
+    return false;
   }
-  const hdr = req.headers.authorization || '';
-  if (hdr.startsWith('Basic ')) {
-    const decoded = Buffer.from(hdr.slice(6), 'base64').toString();
-    const sep = decoded.indexOf(':');
-    if (sep !== -1) {
-      const u = decoded.slice(0, sep);
-      const p = decoded.slice(sep + 1);
-      if (safeEq(u, user) && safeEq(p, pass)) return next();
-    }
-  }
-  res.set('WWW-Authenticate', 'Basic realm="Vakantiechecklist admin"');
-  res.status(401).send('Inloggen vereist');
 }
 
-router.use(adminAuth);
 router.use(express.urlencoded({ extended: false }));
+
+router.use((req, res, next) => {
+  if (!process.env.ADMIN_USER || !process.env.ADMIN_PASSWORD) {
+    return res.status(503).send('Admin-portal is uitgeschakeld. Zet de env vars ADMIN_USER en ADMIN_PASSWORD.');
+  }
+  next();
+});
+
+function loginPage(error) {
+  return page(`
+    <form method="post" action="/admin/login" style="display:block; max-width:340px;">
+      <p><label>Gebruikersnaam<br><input type="text" name="user" required autofocus style="width:100%"></label></p>
+      <p><label>Wachtwoord<br><input type="password" name="password" required style="width:100%"></label></p>
+      ${error ? `<p style="color:#dc3545">${esc(error)}</p>` : ''}
+      <button class="primary" type="submit">Inloggen</button>
+    </form>
+    <p class="muted">Gebruik de waarden van de env vars ADMIN_USER en ADMIN_PASSWORD (niet je gewone site-account).</p>
+  `);
+}
+
+router.post('/login', (req, res) => {
+  const u = String(req.body.user || '');
+  const p = String(req.body.password || '');
+  if (safeEq(u, process.env.ADMIN_USER) && safeEq(p, process.env.ADMIN_PASSWORD)) {
+    const token = jwt.sign({ role: 'admin' }, process.env.JWT_SECRET, { expiresIn: '12h' });
+    res.cookie(ADMIN_COOKIE, token, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 12 * 60 * 60 * 1000,
+    });
+    return res.redirect('/admin');
+  }
+  res.status(401).send(loginPage('Verkeerde gebruikersnaam of wachtwoord.'));
+});
+
+router.post('/logout', (req, res) => {
+  res.clearCookie(ADMIN_COOKIE);
+  res.redirect('/admin');
+});
+
+// Alles hieronder vereist een geldige admin-sessie.
+router.use((req, res, next) => {
+  if (isAdminSession(req)) return next();
+  res.status(401).send(loginPage());
+});
 
 function esc(s) {
   return String(s ?? '')
@@ -100,12 +139,17 @@ router.get('/', async (req, res) => {
       </td>
     </tr>`).join('');
 
-  const body = rows.length
+  const table = rows.length
     ? `<table>
         <tr><th>ID</th><th>E-mail</th><th>Aangemaakt</th><th>Lijsten</th><th>Acties</th></tr>
         ${rowsHtml}
       </table>`
     : '<p>Geen gebruikers in de database.</p>';
+
+  const body = table + `
+    <p style="margin-top:16px">
+      <form method="post" action="/admin/logout"><button type="submit">Uitloggen</button></form>
+    </p>`;
 
   res.send(page(body, req.query.msg));
 });
