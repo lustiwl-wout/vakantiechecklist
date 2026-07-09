@@ -126,6 +126,48 @@ function matchCountryCode(nominatimCode) {
   return COUNTRIES.some(c => c.code === code) ? code : null;
 }
 
+function placeFromAddress(address, fallbackName = '') {
+  return (address && (
+    address.city
+    || address.town
+    || address.village
+    || address.municipality
+    || address.county
+    || address.state
+    || address.region
+    || address.province
+    || address.island
+  )) || fallbackName || '';
+}
+
+const PLACE_SEARCH_TYPES = new Set([
+  'city',
+  'town',
+  'village',
+  'municipality',
+  'hamlet',
+  'county',
+  'state',
+  'region',
+  'province',
+  'district',
+  'suburb',
+  'quarter',
+  'neighbourhood',
+  'island',
+  'archipelago',
+]);
+
+function isSeriousPlaceResult(r) {
+  const category = String(r.category || r.class || '').toLowerCase();
+  const type = String(r.type || '').toLowerCase();
+  const addresstype = String(r.addresstype || '').toLowerCase();
+  return category === 'place'
+    || (category === 'boundary' && type === 'administrative')
+    || PLACE_SEARCH_TYPES.has(type)
+    || PLACE_SEARCH_TYPES.has(addresstype);
+}
+
 // Overpass-categorieën → NL-labels + leeftijdsadvies + activiteit-koppeling.
 // De 'activity' verwijst naar de activiteiten van de checklist zodat
 // 'Zet op mijn programma' de paklijst kan bijwerken. Elke categorie heeft
@@ -190,7 +232,7 @@ function classify(el) {
 router.get('/search', async (req, res) => {
   const q = String(req.query.q || '').trim().slice(0, 120);
   if (q.length < 2) return res.json({ results: [] });
-  const key = `search:${q.toLowerCase()}`;
+  const key = `search:v2:${q.toLowerCase()}`;
   const cached = await cacheGetAny(key, TTL_PLACES);
   if (cached && cached.fresh) return res.json(cached.data);
 
@@ -198,13 +240,20 @@ router.get('/search', async (req, res) => {
     const data = await nominatimFetch(
       `/search?format=jsonv2&limit=5&addressdetails=1&accept-language=nl&q=${encodeURIComponent(q)}`
     );
-    const results = data.map(r => ({
-      label: r.display_name,
-      lat: Number(r.lat),
-      lng: Number(r.lon),
-      country: matchCountryCode(r.address && r.address.country_code),
-      place: (r.address && (r.address.city || r.address.town || r.address.village || r.address.municipality)) || r.name || '',
-    }));
+    const results = data
+      .filter(isSeriousPlaceResult)
+      .map(r => ({
+        label: r.display_name,
+        lat: Number(r.lat),
+        lng: Number(r.lon),
+        country: matchCountryCode(r.address && r.address.country_code),
+        place: placeFromAddress(r.address, r.name),
+      }))
+      .filter(r => r.country && r.place)
+      .filter((r, i, arr) => arr.findIndex(x =>
+        x.place.toLowerCase() === r.place.toLowerCase()
+        && x.country === r.country
+      ) === i);
     const payload = { results };
     cacheSet(key, payload);
     res.json(payload);
@@ -228,7 +277,7 @@ router.get('/reverse', async (req, res) => {
     const payload = {
       label: r.display_name || '',
       country: matchCountryCode(r.address && r.address.country_code),
-      place: (r.address && (r.address.city || r.address.town || r.address.village || r.address.municipality)) || r.name || '',
+      place: placeFromAddress(r.address, r.name),
     };
     cacheSet(key, payload);
     res.json(payload);
