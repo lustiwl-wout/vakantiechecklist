@@ -241,6 +241,7 @@ textarea { min-height: 80px; resize: vertical; }
 }
 .travelers .traveler input[type="text"] { flex: 2 1 0; min-width: 0; }
 .travelers .traveler input[type="number"] { flex: 1 1 80px; min-width: 0; max-width: 110px; }
+.travelers .traveler select { flex: 1 1 150px; min-width: 0; }
 
 /* Checklist view header */
 .checklist-head {

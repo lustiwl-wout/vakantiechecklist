@@ -28,6 +28,7 @@ app.use('/api/checklists', checklistRoutes);
 app.use('/api/items', itemRoutes);
 app.use('/api/meta', metaRoutes);
 app.use('/api/geo', require('./routes/geo'));
+app.use('/api/family', require('./routes/family'));
 app.use('/admin', require('./routes/admin'));
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));

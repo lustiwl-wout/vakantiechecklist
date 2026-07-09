@@ -64,8 +64,17 @@ async function init() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS family_members (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      birthdate DATE NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
     CREATE INDEX IF NOT EXISTS idx_checklists_user ON checklists(user_id);
     CREATE INDEX IF NOT EXISTS idx_items_checklist ON items(checklist_id);
+    CREATE INDEX IF NOT EXISTS idx_family_user ON family_members(user_id);
   `);
 
   // Migratie: weather van TEXT naar JSONB (multi-select).

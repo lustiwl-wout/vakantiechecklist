@@ -40,6 +40,31 @@ function travelerName(t, idx, total) {
   return null;
 }
 
+// Representatieve leeftijd per categorie — de generator werkt intern
+// met leeftijden, maar naar buiten toe volstaan categorieën.
+const CATEGORY_AGE = {
+  baby: 1, peuter: 3, kind: 8, tiener: 15, volwassene: 35, senior: 70,
+};
+
+// Leeftijd van een reiziger op de vertrekdatum. Bronnen (in volgorde):
+// geboortedatum (gezinslid), leeftijdscategorie (medereiziger), of een
+// los leeftijd-getal (oudere checklists). Onbekend = volwassene.
+function resolveAge(t, startDate) {
+  if (t && t.birthdate) {
+    const b = new Date(t.birthdate);
+    const ref = startDate ? new Date(startDate) : new Date();
+    if (!isNaN(b) && !isNaN(ref)) {
+      let a = ref.getFullYear() - b.getFullYear();
+      const m = ref.getMonth() - b.getMonth();
+      if (m < 0 || (m === 0 && ref.getDate() < b.getDate())) a--;
+      return Math.max(0, a);
+    }
+  }
+  if (t && t.category && CATEGORY_AGE[t.category] != null) return CATEGORY_AGE[t.category];
+  if (t && t.age != null) return Number(t.age);
+  return 30;
+}
+
 const PLUG_HINT = {
   uk: 'type G (VK/Ierland/Malta)',
   us: 'type A/B (VS-stijl)',
@@ -74,7 +99,10 @@ function generateItems({
   const land = getCountry(country);
   const home = !!(land && land.home);
 
-  const age = t => (t && t.age != null ? t.age : 30); // onbekend = volwassene
+  // Normaliseer: elke reiziger krijgt een leeftijd op de vertrekdatum,
+  // afgeleid van geboortedatum, categorie of los leeftijd-getal.
+  travelers = travelers.map(t => ({ ...t, age: resolveAge(t, startDate) }));
+  const age = t => (t && t.age != null ? t.age : 30);
   const isBaby = t => age(t) < 2;
   const isToddler = t => age(t) >= 2 && age(t) < 5;
   const isChild = t => age(t) >= 5 && age(t) < 13;
@@ -596,4 +624,4 @@ function generateItems({
   return dedup.map((it, i) => ({ ...it, position: i }));
 }
 
-module.exports = { generateItems, defaultQuantities };
+module.exports = { generateItems, defaultQuantities, resolveAge };

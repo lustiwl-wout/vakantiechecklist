@@ -20,17 +20,35 @@ router.get('/', async (req, res) => {
   res.json({ checklists: rows });
 });
 
+const TRAVELER_CATEGORIES = new Set(['baby', 'peuter', 'kind', 'tiener', 'volwassene', 'senior']);
+
+// Drie vormen van reiziger:
+//  - gezinslid:    { memberId, name, birthdate }  (leeftijd berekend op vertrekdatum)
+//  - medereiziger: { name?, category }            (leeftijdscategorie)
+//  - legacy:       { name?, age }                 (oudere checklists)
 function cleanTravelers(input) {
   const arr = Array.isArray(input) ? input : [];
   const out = arr
-    .map(t => ({
-      name: t && typeof t.name === 'string' ? t.name.trim().slice(0, 60) : '',
-      age: t && t.age != null && t.age !== '' ? Number(t.age) : null,
-    }))
-    .filter(t => t.name || t.age != null)
-    .filter(t => t.age == null || (Number.isFinite(t.age) && t.age >= 0 && t.age <= 120));
-  if (!out.length) out.push({ name: '', age: null });
-  return out;
+    .map(t => {
+      if (!t || typeof t !== 'object') return null;
+      const name = typeof t.name === 'string' ? t.name.trim().slice(0, 60) : '';
+      if (t.birthdate && /^\d{4}-\d{2}-\d{2}$/.test(String(t.birthdate))) {
+        const memberId = Number.isInteger(Number(t.memberId)) ? Number(t.memberId) : null;
+        return { memberId, name, birthdate: String(t.birthdate) };
+      }
+      if (t.category && TRAVELER_CATEGORIES.has(String(t.category))) {
+        return { name, category: String(t.category) };
+      }
+      if (t.age != null && t.age !== '') {
+        const age = Number(t.age);
+        if (Number.isFinite(age) && age >= 0 && age <= 120) return { name, age };
+        return null;
+      }
+      return name ? { name } : null;
+    })
+    .filter(Boolean);
+  if (!out.length) out.push({ name: '' });
+  return out.slice(0, 20);
 }
 
 function cleanWeather(input) {

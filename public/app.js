@@ -49,6 +49,38 @@ const STANDARD_CATEGORIES = [
 
 const CATEGORY_ORDER = STANDARD_CATEGORIES;
 
+const TRAVELER_CATEGORIES = [
+  { value: 'baby', label: 'Baby (0–1)' },
+  { value: 'peuter', label: 'Peuter (2–4)' },
+  { value: 'kind', label: 'Kind (5–12)' },
+  { value: 'tiener', label: 'Tiener (13–17)' },
+  { value: 'volwassene', label: 'Volwassene' },
+  { value: 'senior', label: 'Senior (65+)' },
+];
+
+function ageFromBirthdate(birthdate, ref = new Date()) {
+  const b = new Date(birthdate);
+  if (isNaN(b)) return null;
+  let a = ref.getFullYear() - b.getFullYear();
+  const m = ref.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && ref.getDate() < b.getDate())) a--;
+  return Math.max(0, a);
+}
+
+function categoryFromAge(a) {
+  if (a < 2) return 'baby';
+  if (a < 5) return 'peuter';
+  if (a < 13) return 'kind';
+  if (a < 18) return 'tiener';
+  if (a < 65) return 'volwassene';
+  return 'senior';
+}
+
+async function getFamily() {
+  const res = await api('/api/family');
+  return res.members;
+}
+
 // Landenlijst wordt één keer opgehaald en gedeeld tussen views.
 let countriesCache = null;
 async function getCountries() {
@@ -164,6 +196,7 @@ function renderNav() {
   clear(navEl);
   if (currentUser) {
     navEl.append(
+      el('a', { href: '#/gezin', class: 'btn btn-sm btn-ghost' }, '👨‍👩‍👧 Gezin'),
       el('span', { class: 'who' }, currentUser.email),
       el('button', { class: 'btn btn-sm btn-ghost', onclick: logout }, 'Uitloggen')
     );
@@ -278,13 +311,38 @@ async function renderDashboard() {
 
 // ---------- shared form (create + edit) ----------
 
-function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries: countryList = [] }) {
+function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries: countryList = [], family = [] }) {
   const errBox = el('div', { class: 'error' });
 
-  const initTravelers = (initial.travelers && initial.travelers.length)
-    ? initial.travelers.map(t => ({ name: t.name || '', age: t.age == null ? '' : String(t.age) }))
-    : [{ name: '', age: '' }];
-  let travelers = initTravelers;
+  // Reizigers: gezinsleden (aanvinken) + losse medereizigers (categorie).
+  const familySelected = new Map(); // memberId → boolean
+  const guests = [];                // { name, category }
+
+  if (initial.travelers && initial.travelers.length) {
+    for (const t of initial.travelers) {
+      const byId = t.memberId != null ? family.find(m => m.id === t.memberId) : null;
+      const byData = !byId && t.birthdate
+        ? family.find(m => isoDateOnly(m.birthdate) === isoDateOnly(t.birthdate) && m.name === t.name)
+        : null;
+      const member = byId || byData;
+      if (member) {
+        familySelected.set(member.id, true);
+      } else if (t.birthdate) {
+        // Gezinslid dat inmiddels verwijderd is: bewaar als medereiziger.
+        guests.push({ name: t.name || '', category: categoryFromAge(ageFromBirthdate(t.birthdate) ?? 30) });
+      } else if (t.category) {
+        guests.push({ name: t.name || '', category: t.category });
+      } else if (t.age != null) {
+        guests.push({ name: t.name || '', category: categoryFromAge(Number(t.age)) });
+      } else if (t.name) {
+        guests.push({ name: t.name, category: 'volwassene' });
+      }
+    }
+  } else if (mode === 'create') {
+    // Nieuwe reis: standaard met het hele gezin.
+    for (const m of family) familySelected.set(m.id, true);
+    if (!family.length) guests.push({ name: '', category: 'volwassene' });
+  }
 
   const countries = countryList;
   const nameIn = el('input', { type: 'text', required: true, placeholder: 'Bv. Zomervakantie Spanje', value: initial.name || '' });
@@ -447,35 +505,66 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
     ? el('textarea', { rows: '3', placeholder: 'Eén medicijn per regel, bv.\nIbuprofen 400 mg\nOogdruppels' })
     : null;
 
-  // Travelers UI
+  // Travelers UI: gezin aanvinken + medereizigers met leeftijdscategorie.
   const travelersBox = el('div', { class: 'travelers' });
   function paintTravelers() {
     clear(travelersBox);
-    travelers.forEach((t, i) => {
+
+    if (family.length) {
+      const famBox = el('div', { class: 'checkbox-group' });
+      for (const m of family) {
+        const a = ageFromBirthdate(m.birthdate);
+        famBox.append(el('label', {},
+          el('input', {
+            type: 'checkbox',
+            checked: familySelected.get(m.id) === true,
+            onchange: (e) => familySelected.set(m.id, e.target.checked),
+          }),
+          `${m.name} (${a} jr)`,
+        ));
+      }
+      travelersBox.append(
+        el('div', { class: 'field' },
+          el('label', {}, 'Mijn gezin'),
+          famBox,
+        ),
+      );
+    }
+    travelersBox.append(
+      el('p', { class: 'muted', style: 'margin: 4px 0 12px' },
+        family.length ? 'Gezin aanpassen? ' : 'Tip: sla je gezin één keer op, dan staat het bij elke reis klaar. ',
+        el('a', { href: '#/gezin' }, 'Beheer je gezin →'),
+      ),
+    );
+
+    const guestBox = el('div', {});
+    guests.forEach((g, i) => {
       const nameIn2 = el('input', {
-        type: 'text', placeholder: 'Naam', value: t.name, maxlength: '60',
-        oninput: (e) => { travelers[i].name = e.target.value; },
+        type: 'text', placeholder: 'Naam (optioneel)', value: g.name, maxlength: '60',
+        oninput: (e) => { guests[i].name = e.target.value; },
       });
-      const ageIn = el('input', {
-        type: 'number', min: '0', max: '120', placeholder: 'Leeftijd', value: t.age,
-        oninput: (e) => { travelers[i].age = e.target.value; },
-      });
+      const catSel = el('select', {
+        onchange: (e) => { guests[i].category = e.target.value; },
+      }, ...TRAVELER_CATEGORIES.map(cat =>
+        el('option', { value: cat.value, selected: cat.value === g.category }, cat.label)
+      ));
       const removeBtn = el('button', {
         type: 'button', class: 'btn btn-sm btn-ghost', title: 'Verwijderen',
-        onclick: () => { travelers.splice(i, 1); if (!travelers.length) travelers.push({ name: '', age: '' }); paintTravelers(); },
+        onclick: () => { guests.splice(i, 1); paintTravelers(); },
       }, '✕');
-      travelersBox.append(
-        el('div', { class: 'traveler' },
-          nameIn2, ageIn,
-          travelers.length > 1 ? removeBtn : null,
-        )
-      );
+      guestBox.append(el('div', { class: 'traveler' }, nameIn2, catSel, removeBtn));
     });
-    travelersBox.append(
+    guestBox.append(
       el('button', {
         type: 'button', class: 'btn btn-sm',
-        onclick: () => { travelers.push({ name: '', age: '' }); paintTravelers(); },
-      }, '+ Reiziger toevoegen')
+        onclick: () => { guests.push({ name: '', category: 'volwassene' }); paintTravelers(); },
+      }, '+ Medereiziger toevoegen')
+    );
+    travelersBox.append(
+      el('div', { class: 'field' },
+        el('label', {}, 'Medereizigers (worden niet bewaard voor volgende reizen)'),
+        guestBox,
+      ),
     );
   }
   paintTravelers();
@@ -486,9 +575,16 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
       errBox.textContent = '';
       const checked = Array.from(activitiesBox.querySelectorAll('input:checked')).map(i => i.value);
       const checkedWeather = Array.from(weatherBox.querySelectorAll('input:checked')).map(i => i.value);
-      const cleanTravelers = travelers
-        .map(t => ({ name: (t.name || '').trim(), age: t.age === '' ? null : Number(t.age) }))
-        .filter(t => t.name || t.age != null);
+      const cleanTravelers = [
+        ...family
+          .filter(m => familySelected.get(m.id) === true)
+          .map(m => ({ memberId: m.id, name: m.name, birthdate: isoDateOnly(m.birthdate) })),
+        ...guests.map(g => ({ name: (g.name || '').trim(), category: g.category })),
+      ];
+      if (!cleanTravelers.length) {
+        errBox.textContent = 'Kies minstens één reiziger (gezinslid of medereiziger).';
+        return;
+      }
       if (startIn.value && endIn.value && endIn.value < startIn.value) {
         errBox.textContent = 'De terugkomstdatum ligt vóór de vertrekdatum.';
         return;
@@ -566,7 +662,7 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
 
     el('div', { class: 'card' },
       el('h2', { style: 'margin-top: 0' }, 'Reizigers'),
-      el('p', { class: 'muted', style: 'margin-top: 0' }, 'Naam komt terug in de items (bv. "Pyjama (Sanne)"). Leeftijd is optioneel maar helpt bij baby- en kindspecifieke spullen.'),
+      el('p', { class: 'muted', style: 'margin-top: 0' }, 'Namen komen terug in de items (bv. "Pyjama (Sanne)"). Leeftijden berekenen we automatisch op de vertrekdatum.'),
       travelersBox,
     ),
 
@@ -601,11 +697,17 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
 async function renderNew() {
   clear(app);
   app.append(el('p', { class: 'loading' }, 'Laden…'));
-  const countries = await getCountries();
+  let countries = [], family = [];
+  try {
+    [countries, family] = await Promise.all([getCountries(), getFamily()]);
+  } catch (err) {
+    if (err.status === 401) return navigate('#/login');
+  }
   clear(app);
   app.append(buildChecklistForm({
     mode: 'create',
     countries,
+    family,
     initial: {},
     onSubmit: async (data) => {
       const res = await api('/api/checklists', { method: 'POST', body: data });
@@ -618,9 +720,11 @@ async function renderNew() {
 async function renderEdit(id) {
   clear(app);
   app.append(el('p', { class: 'loading' }, 'Laden…'));
-  let data, countries;
+  let data, countries, family;
   try {
-    [data, countries] = await Promise.all([api(`/api/checklists/${id}`), getCountries()]);
+    [data, countries, family] = await Promise.all([
+      api(`/api/checklists/${id}`), getCountries(), getFamily(),
+    ]);
   } catch (err) {
     if (err.status === 401) return navigate('#/login');
     return showError(err);
@@ -630,6 +734,7 @@ async function renderEdit(id) {
   app.append(buildChecklistForm({
     mode: 'edit',
     countries,
+    family,
     initial: {
       id: c.id,
       name: c.name,
@@ -1172,6 +1277,92 @@ function showError(err) {
   app.append(el('div', { class: 'card empty' }, `Er ging iets mis: ${err.message}`));
 }
 
+// ---------- gezin ----------
+
+async function renderFamily() {
+  clear(app);
+  app.append(el('p', { class: 'loading' }, 'Gezin laden…'));
+  let members;
+  try { members = await getFamily(); }
+  catch (err) {
+    if (err.status === 401) return navigate('#/login');
+    return showError(err);
+  }
+
+  clear(app);
+  const listBox = el('div', {});
+
+  function paintMembers() {
+    clear(listBox);
+    if (!members.length) {
+      listBox.append(el('div', { class: 'card empty' },
+        'Nog geen gezinsleden. Voeg hieronder je gezin toe — dan staan ze bij elke nieuwe reis klaar.'));
+      return;
+    }
+    const ul = el('ul', { class: 'item-list' });
+    for (const m of members) {
+      const a = ageFromBirthdate(m.birthdate);
+      ul.append(el('li', { class: 'item' },
+        el('span', { class: 'text', style: 'cursor: default' },
+          `${m.name} `, el('span', { class: 'muted' }, `— ${isoDateOnly(m.birthdate)} (${a} jaar)`)),
+        el('button', {
+          class: 'icon-btn delete',
+          title: 'Verwijderen',
+          onclick: async () => {
+            if (!confirm(`${m.name} uit je gezin verwijderen? Bestaande checklists veranderen niet.`)) return;
+            try {
+              await api(`/api/family/${m.id}`, { method: 'DELETE' });
+              members = members.filter(x => x.id !== m.id);
+              paintMembers();
+            } catch (err) { toast(err.message); }
+          },
+        }, '✕'),
+      ));
+    }
+    listBox.append(ul);
+  }
+  paintMembers();
+
+  const nameIn = el('input', { type: 'text', placeholder: 'Naam', maxlength: '60', required: true });
+  const birthIn = el('input', { type: 'date', required: true, max: isoDateOnly(new Date()) });
+  const errBox = el('div', { class: 'error' });
+  const addForm = el('form', {
+    onsubmit: async (e) => {
+      e.preventDefault();
+      errBox.textContent = '';
+      try {
+        const res = await api('/api/family', {
+          method: 'POST',
+          body: { name: nameIn.value, birthdate: birthIn.value },
+        });
+        members.push(res.member);
+        members.sort((a, b) => String(a.birthdate).localeCompare(String(b.birthdate)));
+        nameIn.value = ''; birthIn.value = '';
+        paintMembers();
+      } catch (err) { errBox.textContent = err.message; }
+    },
+  },
+    el('div', { class: 'row cols-2' },
+      el('div', { class: 'field' }, el('label', {}, 'Naam'), nameIn),
+      el('div', { class: 'field' }, el('label', {}, 'Geboortedatum'), birthIn),
+    ),
+    errBox,
+    el('button', { type: 'submit', class: 'btn btn-primary' }, '+ Gezinslid toevoegen'),
+  );
+
+  app.append(
+    el('h1', {}, 'Mijn gezin'),
+    el('p', { class: 'muted' },
+      'Je gezin staat bij elke nieuwe reis klaar om aan te vinken. ',
+      'De leeftijd berekenen we automatisch op de vertrekdatum van de reis — zo klopt de paklijst ook als iemand nét jarig is geweest.'),
+    listBox,
+    el('div', { class: 'card' },
+      el('h2', { style: 'margin-top: 0' }, 'Gezinslid toevoegen'),
+      addForm,
+    ),
+  );
+}
+
 // ---------- omgevingsadvies ----------
 
 // Welke leeftijdsgroepen zijn er in dit gezelschap? Bepaalt de aanraders.
@@ -1322,6 +1513,7 @@ async function render() {
   if (editM) return renderEdit(editM[1]);
   const geoM = hash.match(/^#\/list\/(\d+)\/omgeving$/);
   if (geoM) return renderOmgeving(geoM[1]);
+  if (hash === '#/gezin') return renderFamily();
   const m = hash.match(/^#\/list\/(\d+)$/);
   if (m) return renderChecklist(m[1]);
   navigate('#/');
