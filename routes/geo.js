@@ -170,16 +170,20 @@ const PLACE_SEARCH_TYPES = new Set([
  * @returns {boolean} True voor plaats/regio-resultaten, false voor losse POI's.
  */
 function isValidPlaceResult(r) {
-  const category = String(r.category || r.class || '').toLowerCase();
+  const categoryValue = String(r.category || r.class || '').toLowerCase();
   const type = String(r.type || '').toLowerCase();
   const addresstype = String(r.addresstype || '').toLowerCase();
-  if (category === 'place') {
+  if (categoryValue === 'place') {
     return PLACE_SEARCH_TYPES.has(type) || PLACE_SEARCH_TYPES.has(addresstype);
   }
-  if (category === 'boundary') {
+  if (categoryValue === 'boundary') {
     return type === 'administrative' && PLACE_SEARCH_TYPES.has(addresstype);
   }
-  return !category && (PLACE_SEARCH_TYPES.has(type) || PLACE_SEARCH_TYPES.has(addresstype));
+  return !categoryValue && (PLACE_SEARCH_TYPES.has(type) || PLACE_SEARCH_TYPES.has(addresstype));
+}
+
+function createCountryPlaceDedupeKey(country, place) {
+  return `${country}:${place.toLowerCase()}`;
 }
 
 // Overpass-categorieën → NL-labels + leeftijdsadvies + activiteit-koppeling.
@@ -284,7 +288,7 @@ router.get('/search', async (req, res) => {
       // Zonder land + plaats kunnen we de zoekhit niet betrouwbaar invullen.
       .filter(r => r.country && r.place)
       .filter(r => {
-        const dedupeKey = `${r.country}:${r.place.toLowerCase()}`;
+        const dedupeKey = createCountryPlaceDedupeKey(r.country, r.place);
         if (seenCountryPlacePairs.has(dedupeKey)) return false;
         seenCountryPlacePairs.add(dedupeKey);
         return true;
