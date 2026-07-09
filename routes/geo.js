@@ -9,45 +9,90 @@
 const express = require('express');
 const { requireAuth } = require('../auth');
 const { COUNTRIES } = require('../countries');
+const { pool } = require('../db');
 
 const router = express.Router();
 router.use(requireAuth);
 
 const UA = 'vakantiechecklist (persoonlijk hobbyproject; contact via repository)';
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
-const OVERPASS = 'https://overpass-api.de/api/interpreter';
+// De publieke hoofdserver is vaak druk; kumi.systems is een bekende
+// snelle mirror. We proberen ze op volgorde.
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
 
-// ---- cache + throttle ----
+// ---- cache: memory (L1) + database (L2, overleeft Render-herstarts) ----
 
-const cache = new Map(); // key → { at, data }
-function cacheGet(key, ttlMs) {
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < ttlMs) return hit.data;
+const memCache = new Map(); // key → { at, data }
+
+async function cacheGetAny(key, ttlMs) {
+  const hit = memCache.get(key);
+  if (hit) return { data: hit.data, fresh: Date.now() - hit.at < ttlMs };
+  try {
+    const { rows } = await pool.query(
+      'SELECT data, fetched_at FROM geo_cache WHERE key = $1', [key]
+    );
+    if (rows[0]) {
+      const at = new Date(rows[0].fetched_at).getTime();
+      memCache.set(key, { at, data: rows[0].data });
+      return { data: rows[0].data, fresh: Date.now() - at < ttlMs };
+    }
+  } catch (err) {
+    console.error('[geo/cache] lezen mislukt:', err.message);
+  }
   return null;
 }
-function cacheSet(key, data) {
-  if (cache.size > 500) cache.delete(cache.keys().next().value);
-  cache.set(key, { at: Date.now(), data });
+
+async function cacheSet(key, data) {
+  if (memCache.size > 500) memCache.delete(memCache.keys().next().value);
+  memCache.set(key, { at: Date.now(), data });
+  try {
+    await pool.query(
+      `INSERT INTO geo_cache (key, data, fetched_at) VALUES ($1, $2::jsonb, NOW())
+       ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, fetched_at = NOW()`,
+      [key, JSON.stringify(data)]
+    );
+  } catch (err) {
+    console.error('[geo/cache] schrijven mislukt:', err.message);
+  }
 }
+
+const TTL_NEARBY = 30 * 24 * 3600 * 1000;  // POI's veranderen zelden
+const TTL_PLACES = 7 * 24 * 3600 * 1000;
 
 let lastNominatim = 0;
 async function nominatimFetch(path) {
   const wait = lastNominatim + 1100 - Date.now();
   if (wait > 0) await new Promise(r => setTimeout(r, wait));
   lastNominatim = Date.now();
-  const res = await fetch(`${NOMINATIM}${path}`, { headers: { 'User-Agent': UA } });
+  const res = await fetch(`${NOMINATIM}${path}`, {
+    headers: { 'User-Agent': UA },
+    signal: AbortSignal.timeout(10000),
+  });
   if (!res.ok) throw new Error(`Nominatim ${res.status}`);
   return res.json();
 }
 
 async function overpassFetch(query) {
-  const res = await fetch(OVERPASS, {
-    method: 'POST',
-    headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: 'data=' + encodeURIComponent(query),
-  });
-  if (!res.ok) throw new Error(`Overpass ${res.status}`);
-  return res.json();
+  let lastErr = null;
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: 'data=' + encodeURIComponent(query),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!res.ok) throw new Error(`Overpass ${res.status} (${endpoint})`);
+      return await res.json();
+    } catch (err) {
+      lastErr = err;
+      console.warn('[geo] endpoint faalde, probeer volgende:', endpoint, '-', err.message);
+    }
+  }
+  throw lastErr;
 }
 
 // ---- helpers ----
@@ -132,8 +177,8 @@ router.get('/search', async (req, res) => {
   const q = String(req.query.q || '').trim().slice(0, 120);
   if (q.length < 2) return res.json({ results: [] });
   const key = `search:${q.toLowerCase()}`;
-  const cached = cacheGet(key, 24 * 3600 * 1000);
-  if (cached) return res.json(cached);
+  const cached = await cacheGetAny(key, TTL_PLACES);
+  if (cached && cached.fresh) return res.json(cached.data);
 
   try {
     const data = await nominatimFetch(
@@ -159,8 +204,8 @@ router.get('/reverse', async (req, res) => {
   const c = parseCoords(req);
   if (!c) return res.status(400).json({ error: 'Ongeldige coördinaten' });
   const key = `rev:${c.lat.toFixed(3)}:${c.lng.toFixed(3)}`;
-  const cached = cacheGet(key, 24 * 3600 * 1000);
-  if (cached) return res.json(cached);
+  const cached = await cacheGetAny(key, TTL_PLACES);
+  if (cached && cached.fresh) return res.json(cached.data);
 
   try {
     const r = await nominatimFetch(
@@ -179,76 +224,101 @@ router.get('/reverse', async (req, res) => {
   }
 });
 
+function nearbyKey(lat, lng) {
+  return `nearby:v2:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+}
+
+// Haalt omgevingsdata live op bij Overpass en schrijft hem in de cache.
+async function fetchNearbyLive(lat, lng) {
+  const data = await overpassFetch(buildOverpassQuery(lat, lng));
+
+  // Overpass geeft bij een timeout vaak HTTP 200 met een 'remark' en
+  // (vrijwel) lege elements terug. Dat is een fout, geen 'niets in de
+  // buurt' — anders tonen we ten onrechte een lege adviespagina.
+  const elements = data.elements || [];
+  if (data.remark && elements.length === 0) {
+    throw new Error(`Overpass remark: ${data.remark}`);
+  }
+  if (data.remark) console.warn('[geo/nearby] Overpass remark (deels resultaat):', data.remark);
+
+  const radiusByCat = Object.fromEntries(POI_CATEGORIES.map(x => [x.key, x.radiusKm]));
+  const groups = {};
+  const countriesNearby = new Set();
+
+  for (const el of elements) {
+    const tags = el.tags || {};
+    if (tags.boundary === 'administrative' && tags.admin_level === '2') {
+      const iso = String(tags['ISO3166-1'] || '').toLowerCase();
+      if (iso) countriesNearby.add(iso);
+      continue;
+    }
+    const cat = classify(el);
+    if (!cat || !tags.name) continue;
+    const plat = el.lat ?? (el.center && el.center.lat);
+    const plng = el.lon ?? (el.center && el.center.lon);
+    if (plat == null) continue;
+    const dist = haversineKm(lat, lng, plat, plng);
+    if (dist > (radiusByCat[cat] || 35)) continue;
+    (groups[cat] = groups[cat] || []).push({
+      name: tags.name,
+      distanceKm: Math.round(dist * 10) / 10,
+      website: tags.website || tags['contact:website'] || null,
+    });
+  }
+
+  const categories = POI_CATEGORIES
+    .filter(cdef => groups[cdef.key] && groups[cdef.key].length)
+    .map(cdef => ({
+      key: cdef.key,
+      label: cdef.label,
+      ages: cdef.ages,
+      activity: cdef.activity,
+      pois: groups[cdef.key]
+        .sort((a, b) => a.distanceKm - b.distanceKm)
+        // Dedupliceer op naam (zelfde park kan als node én relation in OSM staan)
+        .filter((p, i, arr) => arr.findIndex(x => x.name === p.name) === i)
+        .slice(0, 6),
+    }));
+
+  // Buurlanden: alle admin-grenzen binnen 30 km behalve het land zelf.
+  const neighbours = [...countriesNearby]
+    .map(iso => COUNTRIES.find(cn => cn.code === iso))
+    .filter(Boolean);
+
+  const payload = { categories, neighbours: neighbours.map(({ code, name, euro, idCard }) => ({ code, name, euro, idCard })) };
+  await cacheSet(nearbyKey(lat, lng), payload);
+  return payload;
+}
+
 router.get('/nearby', async (req, res) => {
   const c = parseCoords(req);
   if (!c) return res.status(400).json({ error: 'Ongeldige coördinaten' });
-  const key = `nearby:v2:${c.lat.toFixed(2)}:${c.lng.toFixed(2)}`;
-  const cached = cacheGet(key, 24 * 3600 * 1000);
-  if (cached) return res.json(cached);
+
+  const cached = await cacheGetAny(nearbyKey(c.lat, c.lng), TTL_NEARBY);
+  if (cached && cached.fresh) return res.json(cached.data);
 
   try {
-    const data = await overpassFetch(buildOverpassQuery(c.lat, c.lng));
-
-    // Overpass geeft bij een timeout vaak HTTP 200 met een 'remark' en
-    // (vrijwel) lege elements terug. Dat is een fout, geen 'niets in de
-    // buurt' — anders tonen we ten onrechte een lege adviespagina.
-    const elements = data.elements || [];
-    if (data.remark && elements.length === 0) {
-      throw new Error(`Overpass remark: ${data.remark}`);
-    }
-    if (data.remark) console.warn('[geo/nearby] Overpass remark (deels resultaat):', data.remark);
-
-    const radiusByCat = Object.fromEntries(POI_CATEGORIES.map(x => [x.key, x.radiusKm]));
-    const groups = {};
-    const countriesNearby = new Set();
-
-    for (const el of elements) {
-      const tags = el.tags || {};
-      if (tags.boundary === 'administrative' && tags.admin_level === '2') {
-        const iso = String(tags['ISO3166-1'] || '').toLowerCase();
-        if (iso) countriesNearby.add(iso);
-        continue;
-      }
-      const cat = classify(el);
-      if (!cat || !tags.name) continue;
-      const plat = el.lat ?? (el.center && el.center.lat);
-      const plng = el.lon ?? (el.center && el.center.lon);
-      if (plat == null) continue;
-      const dist = haversineKm(c.lat, c.lng, plat, plng);
-      if (dist > (radiusByCat[cat] || 35)) continue;
-      (groups[cat] = groups[cat] || []).push({
-        name: tags.name,
-        distanceKm: Math.round(dist * 10) / 10,
-        website: tags.website || tags['contact:website'] || null,
-      });
-    }
-
-    const categories = POI_CATEGORIES
-      .filter(cdef => groups[cdef.key] && groups[cdef.key].length)
-      .map(cdef => ({
-        key: cdef.key,
-        label: cdef.label,
-        ages: cdef.ages,
-        activity: cdef.activity,
-        pois: groups[cdef.key]
-          .sort((a, b) => a.distanceKm - b.distanceKm)
-          // Dedupliceer op naam (zelfde park kan als node én relation in OSM staan)
-          .filter((p, i, arr) => arr.findIndex(x => x.name === p.name) === i)
-          .slice(0, 6),
-      }));
-
-    // Buurlanden: alle admin-grenzen binnen 30 km behalve het land zelf.
-    const neighbours = [...countriesNearby]
-      .map(iso => COUNTRIES.find(cn => cn.code === iso))
-      .filter(Boolean);
-
-    const payload = { categories, neighbours: neighbours.map(({ code, name, euro, idCard }) => ({ code, name, euro, idCard })) };
-    cacheSet(key, payload);
-    res.json(payload);
+    res.json(await fetchNearbyLive(c.lat, c.lng));
   } catch (err) {
     console.error('[geo/nearby]', err.message);
+    // Verouderde data is beter dan een foutmelding.
+    if (cached) return res.json(cached.data);
     res.status(502).json({ error: 'Omgevingsinformatie is tijdelijk niet beschikbaar — probeer het later opnieuw' });
   }
 });
 
+// Fire-and-forget: omgevingsdata alvast ophalen zodra een checklist een
+// kaartlocatie krijgt — dan is de Omgeving-pagina daarna meteen snel.
+function prefetchNearby(lat, lng) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+  cacheGetAny(nearbyKey(lat, lng), TTL_NEARBY)
+    .then(hit => {
+      if (hit && hit.fresh) return null;
+      console.log('[geo/prefetch] omgeving voorladen voor', lat.toFixed(2), lng.toFixed(2));
+      return fetchNearbyLive(lat, lng);
+    })
+    .catch(err => console.warn('[geo/prefetch] mislukt (geen probleem):', err.message));
+}
+
 module.exports = router;
+module.exports.prefetchNearby = prefetchNearby;

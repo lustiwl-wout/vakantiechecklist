@@ -3,6 +3,7 @@ const { pool } = require('../db');
 const { requireAuth } = require('../auth');
 const { generateItems, defaultQuantities } = require('../templates');
 const { getCountry } = require('../countries');
+const { prefetchNearby } = require('./geo');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -151,6 +152,8 @@ router.post('/', async (req, res) => {
     }
 
     await client.query('COMMIT');
+    // Omgevingsdata alvast op de achtergrond laden (niet op wachten).
+    if (clat != null && clng != null) prefetchNearby(clat, clng);
     res.json({ checklist });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -225,6 +228,12 @@ router.patch('/:id', async (req, res) => {
   updates.push('updated_at = NOW()');
   params.push(checklist.id);
   await pool.query(`UPDATE checklists SET ${updates.join(', ')} WHERE id = $${p}`, params);
+
+  // Nieuwe of gewijzigde kaartlocatie? Omgevingsdata alvast voorladen.
+  if ('lat' in req.body && 'lng' in req.body) {
+    const plat = Number(req.body.lat); const plng = Number(req.body.lng);
+    if (Number.isFinite(plat) && Number.isFinite(plng)) prefetchNearby(plat, plng);
+  }
 
   // Vergelijk wat de generator vóór en ná de wijziging zou maken.
   // Nieuw t.o.v. de lijst → suggestie om toe te voegen (behalve wat de

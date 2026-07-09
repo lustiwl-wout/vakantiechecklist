@@ -64,6 +64,12 @@ async function init() {
       created_at TIMESTAMPTZ DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS geo_cache (
+      key TEXT PRIMARY KEY,
+      data JSONB NOT NULL,
+      fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS family_members (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -115,6 +121,9 @@ async function init() {
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS border_countries JSONB NOT NULL DEFAULT '[]';
   `);
   await convertLegacyData();
+
+  // Ruim heel oude geo-cache op (best effort).
+  await pool.query("DELETE FROM geo_cache WHERE fetched_at < NOW() - interval '90 days'").catch(() => {});
 }
 
 // Zet data uit oudere versies om naar de huidige velden. Idempotent en

@@ -1381,7 +1381,8 @@ function fitsTravelers(catKey, travelers) {
 
 async function renderOmgeving(id) {
   clear(app);
-  app.append(el('p', { class: 'loading' }, 'Omgeving verkennen…'));
+  app.append(el('p', { class: 'loading' },
+    'Omgeving verkennen… De eerste keer kan dit even duren; daarna staat het klaar.'));
   let data, geo;
   try {
     data = await api(`/api/checklists/${id}`);
