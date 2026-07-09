@@ -126,6 +126,8 @@ function matchCountryCode(nominatimCode) {
   return COUNTRIES.some(c => c.code === code) ? code : null;
 }
 
+// Haalt de beste plaats/regio-naam uit een Nominatim-adres; als die ontbreekt
+// vallen we terug op de losse naam van het resultaat.
 function placeFromAddress(address, fallbackName = '') {
   return (address && (
     address.city
@@ -158,6 +160,9 @@ const PLACE_SEARCH_TYPES = new Set([
   'archipelago',
 ]);
 
+// De zoekpicker is bedoeld voor plaatsen en regio's, niet voor losse POI's
+// zoals campings, kunstwerken of attracties. Daarom accepteren we alleen
+// resultaattypes die Nominatim als plaats of administratief gebied markeert.
 function isValidPlaceResult(r) {
   const category = String(r.category || r.class || '').toLowerCase();
   const type = String(r.type || '').toLowerCase();
