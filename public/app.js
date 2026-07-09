@@ -1240,31 +1240,32 @@ async function renderChecklist(id) {
             title: 'Omgevingsgegevens worden geladen…',
             style: 'opacity: 0.5; pointer-events: none;',
           }, '🗺 Omgeving');
+          function activateOmgevingBtn() {
+            omgevingBtn.removeAttribute('disabled');
+            omgevingBtn.removeAttribute('aria-disabled');
+            omgevingBtn.removeAttribute('title');
+            omgevingBtn.style.opacity = '';
+            omgevingBtn.style.pointerEvents = '';
+          }
           api(`/api/geo/nearby/ready?lat=${c.lat}&lng=${c.lng}`)
             .then(r => {
               if (r.ready) {
-                omgevingBtn.removeAttribute('disabled');
-                omgevingBtn.removeAttribute('aria-disabled');
-                omgevingBtn.removeAttribute('title');
-                omgevingBtn.style.opacity = '';
-                omgevingBtn.style.pointerEvents = '';
+                activateOmgevingBtn();
               } else {
                 // Data nog niet beschikbaar: wacht op prefetch en activeer de knop
                 // zodra de data er is (maximaal 60 s).
+                let timeoutId;
                 const poll = setInterval(() => {
                   api(`/api/geo/nearby/ready?lat=${c.lat}&lng=${c.lng}`)
                     .then(r2 => {
                       if (!r2.ready) return;
                       clearInterval(poll);
-                      omgevingBtn.removeAttribute('disabled');
-                      omgevingBtn.removeAttribute('aria-disabled');
-                      omgevingBtn.removeAttribute('title');
-                      omgevingBtn.style.opacity = '';
-                      omgevingBtn.style.pointerEvents = '';
+                      clearTimeout(timeoutId);
+                      activateOmgevingBtn();
                     })
                     .catch(() => {});
                 }, 5000);
-                setTimeout(() => clearInterval(poll), 60000);
+                timeoutId = setTimeout(() => clearInterval(poll), 60000);
               }
             })
             .catch(() => {});
