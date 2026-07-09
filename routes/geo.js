@@ -173,10 +173,13 @@ function isValidPlaceResult(r) {
   const category = String(r.category || r.class || '').toLowerCase();
   const type = String(r.type || '').toLowerCase();
   const addresstype = String(r.addresstype || '').toLowerCase();
-  return category === 'place'
-    || (category === 'boundary' && type === 'administrative')
-    || PLACE_SEARCH_TYPES.has(type)
-    || PLACE_SEARCH_TYPES.has(addresstype);
+  if (category === 'place') {
+    return PLACE_SEARCH_TYPES.has(type) || PLACE_SEARCH_TYPES.has(addresstype);
+  }
+  if (category === 'boundary') {
+    return type === 'administrative' && PLACE_SEARCH_TYPES.has(addresstype);
+  }
+  return !category && (PLACE_SEARCH_TYPES.has(type) || PLACE_SEARCH_TYPES.has(addresstype));
 }
 
 // Overpass-categorieën → NL-labels + leeftijdsadvies + activiteit-koppeling.
@@ -251,7 +254,7 @@ router.get('/search', async (req, res) => {
     const data = await nominatimFetch(
       `/search?format=jsonv2&limit=5&addressdetails=1&accept-language=nl&q=${encodeURIComponent(q)}`
     );
-    const seenPlaces = new Set();
+    const seenCountryPlacePairs = new Set();
     const results = data
       .filter(isValidPlaceResult)
       .map(r => ({
@@ -265,8 +268,8 @@ router.get('/search', async (req, res) => {
       .filter(r => r.country && r.place)
       .filter(r => {
         const dedupeKey = `${r.country}:${r.place.toLowerCase()}`;
-        if (seenPlaces.has(dedupeKey)) return false;
-        seenPlaces.add(dedupeKey);
+        if (seenCountryPlacePairs.has(dedupeKey)) return false;
+        seenCountryPlacePairs.add(dedupeKey);
         return true;
       });
     const payload = { results };
