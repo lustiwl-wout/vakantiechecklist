@@ -46,7 +46,7 @@ function loginPage(error) {
       ${error ? `<p style="color:#dc3545">${esc(error)}</p>` : ''}
       <button class="primary" type="submit">Inloggen</button>
     </form>
-    <p class="muted">Gebruik de waarden van de env vars ADMIN_USER en ADMIN_PASSWORD (niet je gewone site-account).</p>
+    <p class="muted">Log in met je beheerdersaccount (niet je gewone site-account).</p>
   `);
 }
 
@@ -109,7 +109,6 @@ function page(body, msg) {
 <h1>🧳 Vakantiechecklist — gebruikersbeheer</h1>
 ${msg ? `<div class="msg">${esc(msg)}</div>` : ''}
 ${body}
-<p class="muted">Beveiligd met Basic Auth (ADMIN_USER / ADMIN_PASSWORD env vars).</p>
 </body>
 </html>`;
 }
