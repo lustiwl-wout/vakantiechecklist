@@ -2,29 +2,29 @@
 // Idempotent: draait alleen als de doel-DB nog géén users heeft.
 // Als OLD_DATABASE_URL niet gezet is, is dit een no-op.
 //
-// Bedoeld om éénmalig te draaien tijdens een Render deploy, via
-// `preDeployCommand: node migrate.js` in render.yaml.
-// Na de eerste succesvolle deploy kan OLD_DATABASE_URL uit de env vars
-// worden gehaald — het script doet dan niets meer.
+// Wordt aangeroepen vanuit server.js bij het opstarten (Render free tier
+// heeft geen pre-deploy commands). Na een succesvolle migratie kan
+// OLD_DATABASE_URL uit de env vars worden gehaald — de functie doet dan
+// niets meer. Kan ook los draaien: `node migrate.js`.
 
 require('dotenv').config();
 const { Pool } = require('pg');
 
-async function main() {
+async function migrate() {
   const oldUrl = process.env.OLD_DATABASE_URL;
   const newUrl = process.env.DATABASE_URL;
 
   if (!newUrl) {
     console.error('[migrate] DATABASE_URL ontbreekt — niets te doen.');
-    process.exit(0);
+    return;
   }
   if (!oldUrl) {
     console.log('[migrate] OLD_DATABASE_URL niet gezet — skip (dit is normaal na de eerste migratie).');
-    process.exit(0);
+    return;
   }
   if (oldUrl === newUrl) {
     console.log('[migrate] OLD_DATABASE_URL == DATABASE_URL — skip.');
-    process.exit(0);
+    return;
   }
 
   const sslFor = (url) => ({
@@ -135,8 +135,14 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error('[migrate] Migratie mislukt:', err);
-  // Non-fatal: laat deploy doorgaan met lege DB.
-  process.exit(0);
-});
+module.exports = { migrate };
+
+// Los aangeroepen (node migrate.js): draai direct.
+if (require.main === module) {
+  migrate()
+    .then(() => require('./db').pool.end())
+    .catch(err => {
+      console.error('[migrate] Migratie mislukt:', err);
+      process.exit(1);
+    });
+}
