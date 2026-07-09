@@ -261,15 +261,17 @@ function renderAuth() {
 
 // ---------- dashboard ----------
 
-async function renderDashboard() {
+async function renderDashboard(epoch) {
   clear(app);
   app.append(el('p', { class: 'loading' }, 'Lijsten laden…'));
   let data;
   try { data = await api('/api/checklists'); }
   catch (err) {
+    if (isStale(epoch)) return;
     if (err.status === 401) return navigate('#/login');
     return showError(err);
   }
+  if (isStale(epoch)) return;
 
   clear(app);
   app.append(
@@ -694,7 +696,7 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
   return form;
 }
 
-async function renderNew() {
+async function renderNew(epoch) {
   clear(app);
   app.append(el('p', { class: 'loading' }, 'Laden…'));
   let countries = [], family = [];
@@ -703,6 +705,7 @@ async function renderNew() {
   } catch (err) {
     if (err.status === 401) return navigate('#/login');
   }
+  if (isStale(epoch)) return;
   clear(app);
   app.append(buildChecklistForm({
     mode: 'create',
@@ -717,7 +720,7 @@ async function renderNew() {
   }));
 }
 
-async function renderEdit(id) {
+async function renderEdit(id, epoch) {
   clear(app);
   app.append(el('p', { class: 'loading' }, 'Laden…'));
   let data, countries, family;
@@ -726,9 +729,11 @@ async function renderEdit(id) {
       api(`/api/checklists/${id}`), getCountries(), getFamily(),
     ]);
   } catch (err) {
+    if (isStale(epoch)) return;
     if (err.status === 401) return navigate('#/login');
     return showError(err);
   }
+  if (isStale(epoch)) return;
   const c = data.checklist;
   clear(app);
   app.append(buildChecklistForm({
@@ -848,12 +853,13 @@ function renderSuggestions(id, suggestions, removals = []) {
 
 // ---------- checklist view ----------
 
-async function renderChecklist(id) {
+async function renderChecklist(id, epoch) {
   clear(app);
   app.append(el('p', { class: 'loading' }, 'Checklist laden…'));
   let data;
   try { data = await api(`/api/checklists/${id}`); }
   catch (err) {
+    if (isStale(epoch)) return;
     if (err.status === 401) return navigate('#/login');
     if (err.status === 404) {
       clear(app);
@@ -864,6 +870,7 @@ async function renderChecklist(id) {
     }
     return showError(err);
   }
+  if (isStale(epoch)) return;
 
   const c = data.checklist;
   let items = data.items;
@@ -1311,15 +1318,17 @@ function showError(err) {
 
 // ---------- gezin ----------
 
-async function renderFamily() {
+async function renderFamily(epoch) {
   clear(app);
   app.append(el('p', { class: 'loading' }, 'Gezin laden…'));
   let members;
   try { members = await getFamily(); }
   catch (err) {
+    if (isStale(epoch)) return;
     if (err.status === 401) return navigate('#/login');
     return showError(err);
   }
+  if (isStale(epoch)) return;
 
   clear(app);
   const listBox = el('div', {});
@@ -1411,13 +1420,14 @@ function fitsTravelers(catKey, travelers) {
   }
 }
 
-async function renderOmgeving(id) {
+async function renderOmgeving(id, epoch) {
   clear(app);
   app.append(el('p', { class: 'loading' },
     'Omgeving verkennen… De eerste keer kan dit even duren; daarna staat het klaar.'));
   let data, geo;
   try {
     data = await api(`/api/checklists/${id}`);
+    if (isStale(epoch)) return;
     const c0 = data.checklist;
     if (c0.lat == null || c0.lng == null) {
       clear(app);
@@ -1427,12 +1437,14 @@ async function renderOmgeving(id) {
     }
     geo = await api(`/api/geo/nearby?lat=${c0.lat}&lng=${c0.lng}`);
   } catch (err) {
+    if (isStale(epoch)) return;
     if (err.status === 401) return navigate('#/login');
     clear(app);
     return app.append(el('div', { class: 'card empty' },
       `De omgevingsinformatie kon niet geladen worden: ${err.message}`, el('br'),
       el('a', { href: `#/list/${id}` }, '← Terug naar de checklist')));
   }
+  if (isStale(epoch)) return;
 
   const c = data.checklist;
   const destination = c.destination;
@@ -1578,7 +1590,15 @@ async function renderOmgeving(id) {
 
 // ---------- routing ----------
 
+// Elke navigatie hoogt de teller op. Een async view die pas ná een
+// nieuwe navigatie zijn data binnenkrijgt, is verouderd en mag het
+// scherm niet meer aanraken — anders tekent een traag (of mislukt)
+// Omgeving-verzoek zijn foutpagina over de checklist heen.
+let renderEpoch = 0;
+function isStale(epoch) { return epoch !== renderEpoch; }
+
 async function render() {
+  const epoch = ++renderEpoch;
   const hash = location.hash || '#/';
 
   if (!currentUser && hash !== '#/login') {
@@ -1589,18 +1609,19 @@ async function render() {
     } catch {
       return navigate('#/login');
     }
+    if (isStale(epoch)) return;
   }
 
   if (hash === '#/login') return renderAuth();
-  if (hash === '#/' || hash === '#') return renderDashboard();
-  if (hash === '#/new') return renderNew();
+  if (hash === '#/' || hash === '#') return renderDashboard(epoch);
+  if (hash === '#/new') return renderNew(epoch);
   const editM = hash.match(/^#\/list\/(\d+)\/edit$/);
-  if (editM) return renderEdit(editM[1]);
+  if (editM) return renderEdit(editM[1], epoch);
   const geoM = hash.match(/^#\/list\/(\d+)\/omgeving$/);
-  if (geoM) return renderOmgeving(geoM[1]);
-  if (hash === '#/gezin') return renderFamily();
+  if (geoM) return renderOmgeving(geoM[1], epoch);
+  if (hash === '#/gezin') return renderFamily(epoch);
   const m = hash.match(/^#\/list\/(\d+)$/);
-  if (m) return renderChecklist(m[1]);
+  if (m) return renderChecklist(m[1], epoch);
   navigate('#/');
 }
 
