@@ -158,7 +158,7 @@ const PLACE_SEARCH_TYPES = new Set([
   'archipelago',
 ]);
 
-function isSeriousPlaceResult(r) {
+function isValidPlaceResult(r) {
   const category = String(r.category || r.class || '').toLowerCase();
   const type = String(r.type || '').toLowerCase();
   const addresstype = String(r.addresstype || '').toLowerCase();
@@ -242,7 +242,7 @@ router.get('/search', async (req, res) => {
     );
     const seenPlaces = new Set();
     const results = data
-      .filter(isSeriousPlaceResult)
+      .filter(isValidPlaceResult)
       .map(r => ({
         label: r.display_name,
         lat: Number(r.lat),
@@ -250,6 +250,7 @@ router.get('/search', async (req, res) => {
         country: matchCountryCode(r.address && r.address.country_code),
         place: placeFromAddress(r.address, r.name),
       }))
+      // Zonder land + plaats kunnen we de zoekhit niet betrouwbaar invullen.
       .filter(r => r.country && r.place)
       .filter(r => {
         const dedupeKey = `${r.country}:${r.place.toLowerCase()}`;
