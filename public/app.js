@@ -1252,23 +1252,14 @@ async function renderChecklist(id) {
               if (r.ready) {
                 activateOmgevingBtn();
               } else {
-                // Data nog niet beschikbaar: wacht op prefetch en activeer de knop
-                // zodra de data er is (maximaal 60 s).
-                let timeoutId;
-                const poll = setInterval(() => {
-                  api(`/api/geo/nearby/ready?lat=${c.lat}&lng=${c.lng}`)
-                    .then(r2 => {
-                      if (!r2.ready) return;
-                      clearInterval(poll);
-                      clearTimeout(timeoutId);
-                      activateOmgevingBtn();
-                    })
-                    .catch(() => {});
-                }, 5000);
-                timeoutId = setTimeout(() => clearInterval(poll), 60000);
+                // Data nog niet in cache: haal het op op de achtergrond en
+                // activeer de knop zodra het klaar is.
+                api(`/api/geo/nearby?lat=${c.lat}&lng=${c.lng}`)
+                  .then(() => activateOmgevingBtn())
+                  .catch(() => activateOmgevingBtn()); // bij fout toch beschikbaar maken
               }
             })
-            .catch(() => {});
+            .catch(() => activateOmgevingBtn()); // bij netwerk-/serverfout niet permanent blokkeren
           return omgevingBtn;
         })(),
         el('a', { href: `#/list/${c.id}/edit`, class: 'btn btn-sm' }, 'Aanpassen'),
