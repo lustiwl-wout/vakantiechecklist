@@ -199,23 +199,23 @@ function createCountryPlaceDedupeKey(country, place) {
 // een eigen zoekstraal en resultaat-cap, zodat dichte categorieën
 // (restaurants!) de rest niet verdringen.
 const POI_CATEGORIES = [
-  { key: 'themepark', selectors: ['["tourism"="theme_park"]'], radiusKm: 35, cap: 40, label: 'Pretparken', ages: 'kinderen en tieners', activity: 'themepark' },
-  { key: 'zoo', selectors: ['["tourism"="zoo"]'], radiusKm: 35, cap: 40, label: 'Dierentuinen', ages: 'alle leeftijden', activity: 'daytrip' },
+  { key: 'themepark', selectors: ['["tourism"="theme_park"]'], radiusKm: 35, cap: 80, label: 'Pretparken', ages: 'kinderen en tieners', activity: 'themepark' },
+  { key: 'zoo', selectors: ['["tourism"="zoo"]'], radiusKm: 35, cap: 120, label: 'Dierentuinen', ages: 'alle leeftijden', activity: 'daytrip' },
   // Kinderboerderijen zijn een lokaal uitje (kleinere straal) en horen
   // niet tussen de dierentuinen.
-  { key: 'pettingzoo', selectors: ['["zoo"="petting_zoo"]'], radiusKm: 15, cap: 20, label: 'Kinderboerderijen', ages: 'jonge kinderen', activity: 'daytrip' },
-  { key: 'aquarium', selectors: ['["tourism"="aquarium"]'], radiusKm: 35, cap: 20, label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip' },
+  { key: 'pettingzoo', selectors: ['["zoo"="petting_zoo"]'], radiusKm: 15, cap: 60, label: 'Kinderboerderijen', ages: 'jonge kinderen', activity: 'daytrip' },
+  { key: 'aquarium', selectors: ['["tourism"="aquarium"]'], radiusKm: 35, cap: 40, label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip' },
   // Bosbaden/openluchtzwembaden staan in OSM zelden als water_park maar
   // als swimming_pool of sports_centre+swimming. Die tags zijn ruizig
   // (elk privé-bassin), maar de naam-eis in de query en de bekendheids-
   // score filteren dat weg: alleen zwembaden met een eigen website of
   // wiki-vermelding komen door (Bosbad Zwinderen wél, losse bassins niet).
-  { key: 'waterpark', selectors: ['["leisure"="water_park"]', '["leisure"="swimming_pool"]', '["leisure"="sports_centre"]["sport"="swimming"]'], radiusKm: 35, cap: 40, label: 'Zwembaden & waterparken', ages: 'alle leeftijden', activity: 'pool' },
-  { key: 'nature', selectors: ['["boundary"="national_park"]', '["leisure"="nature_reserve"]'], radiusKm: 35, cap: 40, label: 'Natuur & wandelgebieden', ages: 'alle leeftijden', activity: 'hiking' },
-  { key: 'museum', selectors: ['["tourism"="museum"]'], radiusKm: 25, cap: 40, label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural' },
-  { key: 'attraction', selectors: ['["tourism"="attraction"]'], radiusKm: 20, cap: 40, label: 'Bezienswaardigheden & uitjes', ages: 'alle leeftijden', activity: 'daytrip' },
-  { key: 'beach', selectors: ['["natural"="beach"]'], radiusKm: 25, cap: 20, label: 'Stranden', ages: 'alle leeftijden', activity: 'beach' },
-  { key: 'restaurant', selectors: ['["amenity"="restaurant"]'], radiusKm: 8, cap: 30, label: 'Restaurants', ages: 'alle leeftijden', activity: 'nightlife' },
+  { key: 'waterpark', selectors: ['["leisure"="water_park"]', '["leisure"="swimming_pool"]', '["leisure"="sports_centre"]["sport"="swimming"]'], radiusKm: 35, cap: 100, label: 'Zwembaden & waterparken', ages: 'alle leeftijden', activity: 'pool' },
+  { key: 'nature', selectors: ['["boundary"="national_park"]', '["leisure"="nature_reserve"]'], radiusKm: 35, cap: 80, label: 'Natuur & wandelgebieden', ages: 'alle leeftijden', activity: 'hiking' },
+  { key: 'museum', selectors: ['["tourism"="museum"]'], radiusKm: 25, cap: 100, label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural' },
+  { key: 'attraction', selectors: ['["tourism"="attraction"]'], radiusKm: 20, cap: 80, label: 'Bezienswaardigheden & uitjes', ages: 'alle leeftijden', activity: 'daytrip' },
+  { key: 'beach', selectors: ['["natural"="beach"]'], radiusKm: 25, cap: 40, label: 'Stranden', ages: 'alle leeftijden', activity: 'beach' },
+  { key: 'restaurant', selectors: ['["amenity"="restaurant"]'], radiusKm: 8, cap: 40, label: 'Restaurants', ages: 'alle leeftijden', activity: 'nightlife' },
 ];
 
 function buildOverpassQuery(lat, lng) {
@@ -478,7 +478,7 @@ router.get('/reverse', async (req, res) => {
 // dán mist de gecachte ruwe data elementsoorten en is een verse fetch
 // nodig. Filter-/score-wijzigingen vereisen GEEN nieuwe fetch: die
 // draaien bij het lezen over de gecachte ruwe data.
-const QUERY_VERSION = 1;
+const QUERY_VERSION = 2;
 
 function nearbyKey(lat, lng) {
   return `nearby:raw:${lat.toFixed(2)}:${lng.toFixed(2)}`;
