@@ -21,6 +21,7 @@ const NOMINATIM = 'https://nominatim.openstreetmap.org';
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
 ];
 
 // ---- cache: memory (L1) + database (L2, overleeft Render-herstarts) ----
@@ -210,7 +211,11 @@ const POI_CATEGORIES = [
   // (elk privé-bassin), maar de naam-eis in de query en de bekendheids-
   // score filteren dat weg: alleen zwembaden met een eigen website of
   // wiki-vermelding komen door (Bosbad Zwinderen wél, losse bassins niet).
-  { key: 'waterpark', selectors: ['["leisure"="water_park"]', '["leisure"="swimming_pool"]', '["leisure"="sports_centre"]["sport"="swimming"]'], radiusKm: 35, cap: 100, label: 'Zwembaden & waterparken', ages: 'alle leeftijden', activity: 'pool' },
+  // De vierde selector vangt zwembaden die als sports_centre getagd
+  // staan zónder sport=swimming maar mét een zwem-naam (het Bosbad-
+  // diagnosegeval); de naam-regex draait alleen op sports_centres
+  // binnen de bbox en is dus betaalbaar.
+  { key: 'waterpark', selectors: ['["leisure"="water_park"]', '["leisure"="swimming_pool"]', '["leisure"="sports_centre"]["sport"="swimming"]', '["leisure"="sports_centre"]["name"~"zwembad|bosbad|zwemparadijs",i]'], radiusKm: 35, cap: 100, label: 'Zwembaden & waterparken', ages: 'alle leeftijden', activity: 'pool' },
   { key: 'nature', selectors: ['["boundary"="national_park"]', '["leisure"="nature_reserve"]'], radiusKm: 35, cap: 80, label: 'Natuur & wandelgebieden', ages: 'alle leeftijden', activity: 'hiking' },
   { key: 'museum', selectors: ['["tourism"="museum"]'], radiusKm: 25, cap: 100, label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural' },
   { key: 'attraction', selectors: ['["tourism"="attraction"]'], radiusKm: 20, cap: 80, label: 'Bezienswaardigheden & uitjes', ages: 'alle leeftijden', activity: 'daytrip' },
@@ -252,7 +257,8 @@ function classify(el) {
   if (t.tourism === 'zoo') return 'zoo';
   if (t.tourism === 'aquarium') return 'aquarium';
   if (t.leisure === 'water_park' || t.leisure === 'swimming_pool'
-      || (t.leisure === 'sports_centre' && t.sport === 'swimming')) return 'waterpark';
+      || (t.leisure === 'sports_centre'
+          && (t.sport === 'swimming' || /zwembad|bosbad|zwemparadijs/i.test(String(t.name || ''))))) return 'waterpark';
   if (t.boundary === 'national_park' || t.leisure === 'nature_reserve') return 'nature';
   if (t.tourism === 'museum') return 'museum';
   if (t.natural === 'beach') return 'beach';
@@ -353,7 +359,9 @@ const LODGING_NAME_RE = /groepsaccommodatie|groepsverblijf|vakantiehuis|vakantie
 // Bedrijven die zichzelf als attractie of waterpark taggen maar geen
 // dagje uit zijn.
 const ATTRACTION_NAME_BLOCK = /manege|ruitersport|partycentrum|zalencentrum|feestzaal|kinderopvang|kinderdagverblijf/i;
-const WATERPARK_NAME_BLOCK = /zwemschool|zwemles|sportcentrum|sporthal|sportschool/i;
+// Zwemscholen én losse sub-bassins van een groter zwembad (peuterbad,
+// wedstrijdbad…) zijn geen eigen uitje.
+const WATERPARK_NAME_BLOCK = /zwemschool|zwemles|sportcentrum|sporthal|sportschool|^(peuterbad|wedstrijdbad|buitenbad|binnenbad|recreatiebad|doelgroepenbad|instructiebad|therapiebad|whirlpool)$/i;
 
 // Een naam die alleen een soortnaam is ("PARK", "Zwembad", "Museum") is
 // vrijwel altijd data-vervuiling of een verkeerd getagd bedrijf — echte
@@ -365,10 +373,26 @@ const GENERIC_NAMES = new Set([
   'kinderboerderij', 'speelparadijs', 'binnenspeeltuin', 'natuurgebied', 'bos',
 ]);
 
-function hasGenericName(name, t) {
+// Soortnamen die binnen hun eigen categorie juist bevéstigen wat het is:
+// een zwembad dat 'Bosbad' heet is geen mistag (naam en tag kloppen met
+// elkaar — Bosbad Putten heet in OSM gewoon 'Bosbad'). 'PARK' als
+// pretpark blijft verdacht: 'park' zegt niets over een pretpark.
+const CATEGORY_GENERIC_OK = {
+  waterpark: new Set(['zwembad', 'bosbad', 'waterpark', 'zwemparadijs']),
+  pettingzoo: new Set(['kinderboerderij']),
+  zoo: new Set(['dierentuin']),
+  themepark: new Set(['pretpark', 'attractiepark']),
+  museum: new Set(['museum']),
+  beach: new Set(['strand', 'beach']),
+  restaurant: new Set(['restaurant', 'café', 'cafe']),
+};
+
+function hasGenericName(cat, name, t) {
   const n = name.trim().toLowerCase();
-  if (n.length < 3 || GENERIC_NAMES.has(n)) return !(t.wikipedia || t.wikidata);
-  return false;
+  if (n.length >= 3 && !GENERIC_NAMES.has(n)) return false;
+  if (t.wikipedia || t.wikidata) return false;
+  const ok = CATEGORY_GENERIC_OK[cat];
+  return !(ok && ok.has(n));
 }
 
 function isLodging(cat, name, t) {
@@ -389,7 +413,7 @@ function isValidNearbyPoi(cat, name, t) {
   if (!cat || !name) return false;
   if (t.memorialArt) return false;
   if (t.accessRestricted) return false;
-  if (hasGenericName(name, t)) return false;
+  if (hasGenericName(cat, name, t)) return false;
   if (isLodging(cat, name, t)) return false;
 
   if (cat === 'attraction') {
@@ -409,10 +433,12 @@ function isValidNearbyPoi(cat, name, t) {
     return t.nationalPark || t.wikipedia || Boolean(t.website);
   }
   // Voor echte water_park-objecten geldt de tag zelf als bewijs
-  // (Aqua Mundo heeft geen eigen website in OSM); de drempel is er
-  // voor de ruizige swimming_pool-varianten.
+  // (Aqua Mundo heeft geen eigen website in OSM). Ook benoemde openbare
+  // zwembaden zonder metadata (Bosbad Putten: score 0) tellen mee — de
+  // echte ruis (naamloze bassins, sub-bassins, besloten baden,
+  // zwemscholen) is hierboven al uitgesloten via naam- en toegang-checks.
   let min = MIN_SCORE[cat] ?? 0;
-  if (cat === 'waterpark' && t.waterParkTag) min = 0;
+  if (cat === 'waterpark') min = 0;
   return notabilityScore(cat, t) >= min;
 }
 
@@ -485,7 +511,7 @@ router.get('/reverse', async (req, res) => {
 // dán mist de gecachte ruwe data elementsoorten en is een verse fetch
 // nodig. Filter-/score-wijzigingen vereisen GEEN nieuwe fetch: die
 // draaien bij het lezen over de gecachte ruwe data.
-const QUERY_VERSION = 3;
+const QUERY_VERSION = 4;
 
 function nearbyKey(lat, lng) {
   return `nearby:raw:${lat.toFixed(2)}:${lng.toFixed(2)}`;
@@ -744,7 +770,7 @@ out center tags 50;`);
         verdict: {
           valid: cat ? isValidNearbyPoi(cat, name, t) : false,
           lodging: cat ? isLodging(cat, name, t) : null,
-          genericName: hasGenericName(name, t),
+          genericName: hasGenericName(cat, name, t),
           score: cat ? notabilityScore(cat, t) : null,
           minRequired: cat ? (MIN_SCORE[cat] ?? 0) : null,
         },
