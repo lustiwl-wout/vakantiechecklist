@@ -4,11 +4,18 @@ services:
     env: node
     plan: free
     buildCommand: npm install
+    preDeployCommand: node migrate.js
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
+        sync: false
+      # Tijdelijk: URL van de OUDE database om data uit te migreren.
+      # Vul deze in bij de eerste deploy naar de nieuwe DB en verwijder
+      # hem daarna weer — migrate.js is idempotent en no-op als deze
+      # variabele niet gezet is.
+      - key: OLD_DATABASE_URL
         sync: false
       - key: JWT_SECRET
         generateValue: true

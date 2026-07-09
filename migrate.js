@@ -1,0 +1,142 @@
+// Migreert data van OLD_DATABASE_URL naar DATABASE_URL (zelfde schema).
+// Idempotent: draait alleen als de doel-DB nog géén users heeft.
+// Als OLD_DATABASE_URL niet gezet is, is dit een no-op.
+//
+// Bedoeld om éénmalig te draaien tijdens een Render deploy, via
+// `preDeployCommand: node migrate.js` in render.yaml.
+// Na de eerste succesvolle deploy kan OLD_DATABASE_URL uit de env vars
+// worden gehaald — het script doet dan niets meer.
+
+require('dotenv').config();
+const { Pool } = require('pg');
+
+async function main() {
+  const oldUrl = process.env.OLD_DATABASE_URL;
+  const newUrl = process.env.DATABASE_URL;
+
+  if (!newUrl) {
+    console.error('[migrate] DATABASE_URL ontbreekt — niets te doen.');
+    process.exit(0);
+  }
+  if (!oldUrl) {
+    console.log('[migrate] OLD_DATABASE_URL niet gezet — skip (dit is normaal na de eerste migratie).');
+    process.exit(0);
+  }
+  if (oldUrl === newUrl) {
+    console.log('[migrate] OLD_DATABASE_URL == DATABASE_URL — skip.');
+    process.exit(0);
+  }
+
+  const sslFor = (url) => ({
+    connectionString: url,
+    ssl: /sslmode=(require|verify-ca|verify-full)/i.test(url) || /\.neon\.tech/i.test(url)
+      ? { rejectUnauthorized: false } : false,
+    max: 3,
+  });
+
+  const src = new Pool(sslFor(oldUrl));
+  const dst = new Pool(sslFor(newUrl));
+
+  try {
+    // Zorg dat het schema bestaat in de nieuwe DB.
+    console.log('[migrate] Schema-check op DATABASE_URL…');
+    const { init } = require('./db');
+    await init();
+
+    // Idempotent: skip als er al users staan.
+    const { rows: existing } = await dst.query('SELECT COUNT(*)::int AS n FROM users');
+    if (existing[0].n > 0) {
+      console.log(`[migrate] Doel-DB heeft al ${existing[0].n} users — migratie overslaan.`);
+      return;
+    }
+
+    // Check of de bron bereikbaar is + heeft data.
+    let srcUsers;
+    try {
+      srcUsers = await src.query('SELECT COUNT(*)::int AS n FROM users');
+    } catch (err) {
+      console.error('[migrate] Kan OLD_DATABASE_URL niet bereiken:', err.message);
+      console.error('[migrate] Deploy gaat door zonder migratie. Nieuwe DB blijft leeg.');
+      return;
+    }
+    if (srcUsers.rows[0].n === 0) {
+      console.log('[migrate] Bron-DB heeft geen users — niets te kopiëren.');
+      return;
+    }
+
+    console.log(`[migrate] Kopieer ${srcUsers.rows[0].n} users + gerelateerde data…`);
+
+    // Kopieer in transactie: users → checklists → items.
+    const client = await dst.connect();
+    try {
+      await client.query('BEGIN');
+
+      const { rows: users } = await src.query(
+        'SELECT id, email, password_hash, created_at FROM users ORDER BY id'
+      );
+      for (const u of users) {
+        await client.query(
+          'INSERT INTO users (id, email, password_hash, created_at) VALUES ($1,$2,$3,$4)',
+          [u.id, u.email, u.password_hash, u.created_at]
+        );
+      }
+
+      const { rows: cls } = await src.query(
+        `SELECT id, user_id, name, destination, start_date, end_date, travelers,
+                transport, weather, accommodation, activities, created_at, updated_at
+           FROM checklists ORDER BY id`
+      );
+      for (const c of cls) {
+        await client.query(
+          `INSERT INTO checklists
+             (id, user_id, name, destination, start_date, end_date, travelers,
+              transport, weather, accommodation, activities, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11::jsonb,$12,$13)`,
+          [
+            c.id, c.user_id, c.name, c.destination, c.start_date, c.end_date,
+            JSON.stringify(c.travelers),
+            c.transport,
+            JSON.stringify(c.weather),
+            c.accommodation,
+            JSON.stringify(c.activities),
+            c.created_at, c.updated_at,
+          ]
+        );
+      }
+
+      const { rows: items } = await src.query(
+        `SELECT id, checklist_id, text, category, is_checked, position, created_at
+           FROM items ORDER BY id`
+      );
+      for (const it of items) {
+        await client.query(
+          `INSERT INTO items (id, checklist_id, text, category, is_checked, position, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [it.id, it.checklist_id, it.text, it.category, it.is_checked, it.position, it.created_at]
+        );
+      }
+
+      // Reset sequences zodat AUTO_INCREMENT verder gaat vanaf max(id).
+      await client.query(`SELECT setval(pg_get_serial_sequence('users','id'), COALESCE((SELECT MAX(id) FROM users), 1))`);
+      await client.query(`SELECT setval(pg_get_serial_sequence('checklists','id'), COALESCE((SELECT MAX(id) FROM checklists), 1))`);
+      await client.query(`SELECT setval(pg_get_serial_sequence('items','id'), COALESCE((SELECT MAX(id) FROM items), 1))`);
+
+      await client.query('COMMIT');
+      console.log(`[migrate] Klaar: ${users.length} users, ${cls.length} checklists, ${items.length} items gekopieerd.`);
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
+    }
+  } finally {
+    await src.end().catch(() => {});
+    await dst.end().catch(() => {});
+  }
+}
+
+main().catch(err => {
+  console.error('[migrate] Migratie mislukt:', err);
+  // Non-fatal: laat deploy doorgaan met lege DB.
+  process.exit(0);
+});
