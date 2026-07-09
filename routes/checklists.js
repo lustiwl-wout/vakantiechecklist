@@ -57,6 +57,7 @@ router.post('/', async (req, res) => {
     name, destination, country, startDate, endDate,
     travelers, transport, weather, accommodation,
     activities, medications, quantities, rentalCar,
+    lat, lng,
   } = req.body || {};
 
   if (!name || !String(name).trim()) {
@@ -75,13 +76,16 @@ router.post('/', async (req, res) => {
   const cq = cleanQuantities(quantities);
   const cc = getCountry(country) ? String(country).toLowerCase() : null;
   const rc = rentalCar === true;
+  const cleanCoord = (v, max) => (Number.isFinite(Number(v)) && Math.abs(Number(v)) <= max) ? Number(v) : null;
+  const clat = cleanCoord(lat, 90);
+  const clng = cleanCoord(lng, 180);
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO checklists (user_id, name, destination, country, start_date, end_date, travelers, transport, weather, accommodation, activities, rental_car)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11::jsonb, $12)
+      `INSERT INTO checklists (user_id, name, destination, country, start_date, end_date, travelers, transport, weather, accommodation, activities, rental_car, lat, lng)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11::jsonb, $12, $13, $14)
        RETURNING *`,
       [
         req.userId,
@@ -96,6 +100,8 @@ router.post('/', async (req, res) => {
         accommodation || null,
         JSON.stringify(ca),
         rc,
+        clat,
+        clng,
       ]
     );
     const checklist = rows[0];
@@ -169,6 +175,8 @@ router.patch('/:id', async (req, res) => {
   if ('destination' in req.body) set('destination', req.body.destination || null);
   if ('country' in req.body) set('country', getCountry(req.body.country) ? String(req.body.country).toLowerCase() : null);
   if ('rentalCar' in req.body) set('rental_car', req.body.rentalCar === true);
+  if ('lat' in req.body) set('lat', Number.isFinite(Number(req.body.lat)) && Math.abs(req.body.lat) <= 90 ? Number(req.body.lat) : null);
+  if ('lng' in req.body) set('lng', Number.isFinite(Number(req.body.lng)) && Math.abs(req.body.lng) <= 180 ? Number(req.body.lng) : null);
   if ('startDate' in req.body) set('start_date', req.body.startDate || null);
   if ('endDate' in req.body) set('end_date', req.body.endDate || null);
   if ('transport' in req.body) set('transport', req.body.transport || null);
@@ -401,8 +409,8 @@ router.post('/:id/duplicate', async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows: cl } = await client.query(
-      `INSERT INTO checklists (user_id, name, destination, start_date, end_date, travelers, transport, weather, accommodation, activities)
-       SELECT user_id, $2, destination, start_date, end_date, travelers, transport, weather, accommodation, activities
+      `INSERT INTO checklists (user_id, name, destination, country, start_date, end_date, travelers, transport, weather, accommodation, activities, rental_car, lat, lng, removed_texts)
+       SELECT user_id, $2, destination, country, start_date, end_date, travelers, transport, weather, accommodation, activities, rental_car, lat, lng, removed_texts
          FROM checklists WHERE id = $1
        RETURNING *`,
       [checklist.id, `${checklist.name} (kopie)`]

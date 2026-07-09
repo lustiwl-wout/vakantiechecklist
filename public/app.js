@@ -299,6 +299,81 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
   const endIn = el('input', { type: 'date', value: isoDateOnly(initial.endDate) });
   const rentalIn = el('input', { type: 'checkbox', checked: initial.rentalCar === true });
 
+  // Kaart-picker (OpenStreetMap/Leaflet): zoeken of klikken zet de
+  // bestemming, en vult land + plaats automatisch in.
+  let pickedLat = initial.lat ?? null;
+  let pickedLng = initial.lng ?? null;
+  const mapDiv = el('div', { class: 'map-box' });
+  const mapSearchIn = el('input', { type: 'text', placeholder: 'Zoek je bestemming… (bv. Emmen of Salou)' });
+  const mapResults = el('div', { class: 'map-results' });
+  const mapHint = el('p', { class: 'muted', style: 'margin: 6px 0 0' },
+    'Zoek hierboven of klik op de kaart. Land en plaats worden automatisch ingevuld.');
+
+  function applyPlace(p) {
+    if (p.country) countrySel.value = p.country;
+    if (p.place) destIn.value = p.place;
+  }
+
+  let leafletMap = null;
+  let marker = null;
+  function setMarker(lat, lng, pan) {
+    pickedLat = lat; pickedLng = lng;
+    if (!leafletMap) return;
+    if (!marker) marker = L.marker([lat, lng]).addTo(leafletMap);
+    else marker.setLatLng([lat, lng]);
+    if (pan) leafletMap.setView([lat, lng], Math.max(leafletMap.getZoom(), 9));
+  }
+
+  function initMap() {
+    if (typeof L === 'undefined') {
+      mapDiv.textContent = 'Kaart kon niet geladen worden — je kunt land en plaats gewoon handmatig invullen.';
+      return;
+    }
+    leafletMap = L.map(mapDiv).setView(
+      pickedLat != null ? [pickedLat, pickedLng] : [52.2, 5.3],
+      pickedLat != null ? 9 : 6
+    );
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap-bijdragers',
+    }).addTo(leafletMap);
+    if (pickedLat != null) setMarker(pickedLat, pickedLng, false);
+    leafletMap.on('click', async (e) => {
+      setMarker(e.latlng.lat, e.latlng.lng, false);
+      try {
+        const r = await api(`/api/geo/reverse?lat=${e.latlng.lat}&lng=${e.latlng.lng}`);
+        applyPlace(r);
+      } catch { /* handmatig invullen kan altijd */ }
+    });
+    // Leaflet meet de container pas goed als hij zichtbaar is.
+    setTimeout(() => leafletMap.invalidateSize(), 100);
+  }
+  setTimeout(initMap, 0);
+
+  let searchTimer = null;
+  mapSearchIn.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    const q = mapSearchIn.value.trim();
+    if (q.length < 2) { clear(mapResults); return; }
+    searchTimer = setTimeout(async () => {
+      try {
+        const r = await api(`/api/geo/search?q=${encodeURIComponent(q)}`);
+        clear(mapResults);
+        for (const hit of r.results) {
+          mapResults.append(el('button', {
+            type: 'button', class: 'map-result',
+            onclick: () => {
+              clear(mapResults);
+              mapSearchIn.value = hit.place || hit.label;
+              setMarker(hit.lat, hit.lng, true);
+              applyPlace(hit);
+            },
+          }, hit.label));
+        }
+      } catch { /* zoeken faalt stil; kaartklik werkt nog */ }
+    }, 400);
+  });
+
   const transportSel = el('select', {}, ...TRANSPORT.map(o =>
     el('option', { value: o.value, selected: o.value === (initial.transport || '') }, o.label)
   ));
@@ -430,6 +505,8 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
         accommodation: accomSel.value,
         activities: checked,
         rentalCar: rentalIn.checked,
+        lat: pickedLat,
+        lng: pickedLng,
       };
       if (mode === 'create') {
         data.medications = medsIn.value.split('\n').map(s => s.trim()).filter(Boolean);
@@ -462,6 +539,10 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
 
     el('div', { class: 'card spaced' },
       el('div', { class: 'field' }, el('label', {}, 'Naam van de reis *'), nameIn),
+      el('div', { class: 'field' },
+        el('label', {}, 'Bestemming op de kaart'),
+        mapSearchIn, mapResults, mapDiv, mapHint,
+      ),
       el('div', { class: 'row cols-2' },
         el('div', { class: 'field' }, el('label', {}, 'Land'), countrySel),
         el('div', { class: 'field' }, el('label', {}, 'Plaats / regio'), destIn),
@@ -562,6 +643,8 @@ async function renderEdit(id) {
       accommodation: c.accommodation,
       activities: c.activities,
       rentalCar: c.rental_car,
+      lat: c.lat,
+      lng: c.lng,
     },
     onSubmit: async (formData) => {
       const res = await api(`/api/checklists/${id}`, { method: 'PATCH', body: formData });
@@ -1042,6 +1125,9 @@ async function renderChecklist(id) {
         metaParts.length ? el('div', { class: 'checklist-meta' }, metaParts.join(' • ')) : null,
       ),
       el('div', { class: 'head-actions no-print' },
+        (c.lat != null && c.lng != null)
+          ? el('a', { href: `#/list/${c.id}/omgeving`, class: 'btn btn-sm' }, '🗺 Omgeving')
+          : null,
         el('a', { href: `#/list/${c.id}/edit`, class: 'btn btn-sm' }, 'Aanpassen'),
         el('button', {
           class: 'btn btn-sm',
@@ -1086,6 +1172,134 @@ function showError(err) {
   app.append(el('div', { class: 'card empty' }, `Er ging iets mis: ${err.message}`));
 }
 
+// ---------- omgevingsadvies ----------
+
+// Welke leeftijdsgroepen zijn er in dit gezelschap? Bepaalt de aanraders.
+function fitsTravelers(catKey, travelers) {
+  const ages = (travelers || []).map(t => (t.age != null ? t.age : 30));
+  const anyKid = ages.some(a => a >= 2 && a < 13);
+  const anyTeen = ages.some(a => a >= 13 && a < 18);
+  const anySchoolPlus = ages.some(a => a >= 6);
+  switch (catKey) {
+    case 'themepark': return anyKid || anyTeen;
+    case 'waterpark': return anyKid || anyTeen;
+    case 'museum': return anySchoolPlus;
+    default: return true; // dierentuin, aquarium, strand: iedereen
+  }
+}
+
+async function renderOmgeving(id) {
+  clear(app);
+  app.append(el('p', { class: 'loading' }, 'Omgeving verkennen…'));
+  let data, geo;
+  try {
+    data = await api(`/api/checklists/${id}`);
+    const c0 = data.checklist;
+    if (c0.lat == null || c0.lng == null) {
+      clear(app);
+      return app.append(el('div', { class: 'card empty' },
+        'Deze checklist heeft nog geen kaartlocatie. ',
+        el('a', { href: `#/list/${id}/edit` }, 'Kies eerst je bestemming op de kaart.')));
+    }
+    geo = await api(`/api/geo/nearby?lat=${c0.lat}&lng=${c0.lng}`);
+  } catch (err) {
+    if (err.status === 401) return navigate('#/login');
+    clear(app);
+    return app.append(el('div', { class: 'card empty' },
+      `De omgevingsinformatie kon niet geladen worden: ${err.message}`, el('br'),
+      el('a', { href: `#/list/${id}` }, '← Terug naar de checklist')));
+  }
+
+  const c = data.checklist;
+  const currentActivities = new Set(Array.isArray(c.activities) ? c.activities : []);
+
+  clear(app);
+  app.append(
+    el('a', { href: `#/list/${id}`, class: 'btn btn-sm btn-ghost' }, '← Terug'),
+    el('h1', { style: 'margin-top: 8px' }, `In de buurt van ${c.destination || 'je bestemming'}`),
+    el('p', { class: 'muted' },
+      'Uitjes binnen ± 35 km van je bestemming, afgestemd op je reisgezelschap. ',
+      'Zet iets op je programma en we stellen meteen de bijbehorende spullen voor.'),
+  );
+
+  // Grens-hint: buurland dichtbij → dagje over de grens.
+  const others = (geo.neighbours || []).filter(n => n.code !== c.country);
+  if (others.length) {
+    const names = others.map(n => n.name).join(' en ');
+    const extra = others.some(n => !n.euro) ? ' Denk aan wat contant geld in de lokale valuta.' : '';
+    app.append(el('div', { class: 'card neighbour-hint' },
+      el('strong', {}, `🚗 ${names} ligt op een half uur rijden`),
+      el('p', { style: 'margin: 6px 0 10px' },
+        `Een dagje over de grens is zo gepland. Neem voor iedereen een ID of paspoort mee (staat al op je lijst).${extra}`),
+      el('button', {
+        class: 'btn btn-sm btn-primary',
+        onclick: async (e) => {
+          e.target.disabled = true;
+          try {
+            const acts = [...new Set([...currentActivities, 'daytrip'])];
+            const res = await api(`/api/checklists/${id}`, { method: 'PATCH', body: { activities: acts } });
+            if ((res.suggestions || []).length || (res.removals || []).length) {
+              renderSuggestions(id, res.suggestions || [], res.removals || []);
+            } else {
+              toast('Dagtrip staat op je programma');
+              navigate(`#/list/${id}`);
+            }
+          } catch (err) { e.target.disabled = false; toast(err.message); }
+        },
+      }, currentActivities.has('daytrip') ? 'Staat al op je programma' : '+ Zet dagtrip op mijn programma'),
+    ));
+  }
+
+  if (!geo.categories.length) {
+    app.append(el('div', { class: 'card empty' },
+      'Geen uitjes gevonden binnen 35 km. Probeer het later opnieuw, of verken de omgeving ter plekke!'));
+    return;
+  }
+
+  // Aanraders voor dit gezelschap eerst.
+  const sorted = [...geo.categories].sort((a, b) =>
+    Number(fitsTravelers(b.key, c.travelers)) - Number(fitsTravelers(a.key, c.travelers)));
+
+  for (const cat of sorted) {
+    const fit = fitsTravelers(cat.key, c.travelers);
+    const already = currentActivities.has(cat.activity);
+    const card = el('div', { class: 'card poi-card' },
+      el('div', { class: 'poi-head' },
+        el('h2', { style: 'margin: 0' }, cat.label),
+        fit ? el('span', { class: 'badge-fit' }, 'aanrader voor jullie') : null,
+      ),
+      el('p', { class: 'muted', style: 'margin: 2px 0 10px' }, `Leuk voor: ${cat.ages}`),
+      el('ul', { class: 'poi-list' },
+        ...cat.pois.map(p => el('li', {},
+          el('span', { class: 'poi-name' },
+            p.website
+              ? el('a', { href: p.website, target: '_blank', rel: 'noopener' }, p.name)
+              : p.name),
+          el('span', { class: 'poi-dist' }, `${p.distanceKm} km`),
+        )),
+      ),
+      el('button', {
+        class: 'btn btn-sm' + (already ? '' : ' btn-primary'),
+        disabled: already,
+        onclick: async (e) => {
+          e.target.disabled = true;
+          try {
+            const acts = [...new Set([...currentActivities, cat.activity])];
+            const res = await api(`/api/checklists/${id}`, { method: 'PATCH', body: { activities: acts } });
+            if ((res.suggestions || []).length || (res.removals || []).length) {
+              renderSuggestions(id, res.suggestions || [], res.removals || []);
+            } else {
+              toast('Toegevoegd aan je programma');
+              navigate(`#/list/${id}`);
+            }
+          } catch (err) { e.target.disabled = false; toast(err.message); }
+        },
+      }, already ? 'Staat al op je programma' : '+ Zet op mijn programma'),
+    );
+    app.append(card);
+  }
+}
+
 // ---------- routing ----------
 
 async function render() {
@@ -1106,6 +1320,8 @@ async function render() {
   if (hash === '#/new') return renderNew();
   const editM = hash.match(/^#\/list\/(\d+)\/edit$/);
   if (editM) return renderEdit(editM[1]);
+  const geoM = hash.match(/^#\/list\/(\d+)\/omgeving$/);
+  if (geoM) return renderOmgeving(geoM[1]);
   const m = hash.match(/^#\/list\/(\d+)$/);
   if (m) return renderChecklist(m[1]);
   navigate('#/');

@@ -101,6 +101,8 @@ async function init() {
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS rental_car BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS removed_texts JSONB NOT NULL DEFAULT '[]';
     ALTER TABLE items ADD COLUMN IF NOT EXISTS origin TEXT;
+    ALTER TABLE checklists ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
+    ALTER TABLE checklists ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
   `);
   await convertLegacyData();
 }
