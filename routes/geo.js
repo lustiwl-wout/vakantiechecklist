@@ -732,7 +732,7 @@ out center tags 50;`);
             valid: isValidNearbyPoi(cat, tags.name, t),
             lodging: isLodging(cat, tags.name, t),
             score: notabilityScore(cat, t),
-            minRequired: MIN_SCORE[cat] ?? 0,
+            minRequired: cat === 'waterpark' ? 0 : (MIN_SCORE[cat] ?? 0),
           } : { valid: false, reden: tags.name ? 'geen categorie' : 'geen naam — onzichtbaar voor de app' },
           tags,
         };
@@ -774,7 +774,7 @@ out center tags 50;`);
           lodging: cat ? isLodging(cat, name, t) : null,
           genericName: hasGenericName(cat, name, t),
           score: cat ? notabilityScore(cat, t) : null,
-          minRequired: cat ? (MIN_SCORE[cat] ?? 0) : null,
+          minRequired: cat ? (cat === 'waterpark' ? 0 : (MIN_SCORE[cat] ?? 0)) : null,
         },
         tags,
       };
