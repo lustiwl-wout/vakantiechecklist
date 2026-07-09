@@ -469,12 +469,21 @@ router.get('/reverse', async (req, res) => {
   }
 });
 
+// Alleen ophogen als buildOverpassQuery of de selectors veranderen —
+// dán mist de gecachte ruwe data elementsoorten en is een verse fetch
+// nodig. Filter-/score-wijzigingen vereisen GEEN nieuwe fetch: die
+// draaien bij het lezen over de gecachte ruwe data.
+const QUERY_VERSION = 1;
+
 function nearbyKey(lat, lng) {
-  return `nearby:v11:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+  return `nearby:raw:${lat.toFixed(2)}:${lng.toFixed(2)}`;
 }
 
-// Haalt omgevingsdata live op bij Overpass en schrijft hem in de cache.
-async function fetchNearbyLive(lat, lng) {
+// Haalt de ruwe omgevingsdata op bij Overpass en cachet die 30 dagen.
+// We bewaren bewust de ONGEFILTERDE elementen: zo profiteren
+// filter-verbeteringen direct van de bestaande cache in plaats van
+// telkens een trage nieuwe zoektocht af te dwingen.
+async function fetchNearbyRaw(lat, lng) {
   const data = await overpassFetch(buildOverpassQuery(lat, lng));
 
   // Overpass geeft bij een timeout vaak HTTP 200 met een 'remark' en
@@ -486,21 +495,43 @@ async function fetchNearbyLive(lat, lng) {
   }
   if (data.remark) console.warn('[geo/nearby] Overpass remark (deels resultaat):', data.remark);
 
+  const raw = {
+    qv: QUERY_VERSION,
+    els: elements
+      .map(el => ({
+        la: el.lat ?? (el.center && el.center.lat) ?? null,
+        lo: el.lon ?? (el.center && el.center.lon) ?? null,
+        tags: el.tags || {},
+      }))
+      .filter(e => Object.keys(e.tags).length),
+  };
+  await cacheSet(nearbyKey(lat, lng), raw);
+  console.log(`[geo/cache] omgeving opgeslagen: ${nearbyKey(lat, lng)} (${raw.els.length} elementen)`);
+  return raw;
+}
+
+function usableRaw(cached) {
+  return !!(cached && cached.data && cached.data.qv === QUERY_VERSION && Array.isArray(cached.data.els));
+}
+
+// Bouwt het advies-antwoord uit de (gecachte) ruwe elementen — hier
+// leven classificatie, validatie, merge en sortering.
+function buildPayload(lat, lng, raw) {
   const radiusByCat = Object.fromEntries(POI_CATEGORIES.map(x => [x.key, x.radiusKm]));
   const groups = {}; // cat → Map(naam-sleutel → kandidaat)
   const countriesNearby = new Set();
 
-  for (const el of elements) {
-    const tags = el.tags || {};
+  for (const el of raw.els) {
+    const tags = el.tags;
     if (tags.boundary === 'administrative' && tags.admin_level === '2') {
       const iso = String(tags['ISO3166-1'] || '').toLowerCase();
       if (iso) countriesNearby.add(iso);
       continue;
     }
-    const cat = classify(el);
+    const cat = classify({ tags });
     if (!cat || !tags.name) continue;
-    const plat = el.lat ?? (el.center && el.center.lat);
-    const plng = el.lon ?? (el.center && el.center.lon);
+    const plat = el.la;
+    const plng = el.lo;
     if (plat == null) continue;
     const dist = haversineKm(lat, lng, plat, plng);
     // Grote gebieden (natuur, strand) hebben hun centroid soms ver van de
@@ -554,10 +585,19 @@ async function fetchNearbyLive(lat, lng) {
     .map(iso => COUNTRIES.find(cn => cn.code === iso))
     .filter(Boolean);
 
-  const payload = { categories, neighbours: neighbours.map(({ code, name, euro, idCard }) => ({ code, name, euro, idCard })) };
-  await cacheSet(nearbyKey(lat, lng), payload);
-  console.log(`[geo/cache] omgeving opgeslagen: ${nearbyKey(lat, lng)} (${categories.length} categorieën)`);
-  return payload;
+  return { categories, neighbours: neighbours.map(({ code, name, euro, idCard }) => ({ code, name, euro, idCard })) };
+}
+
+// Verse fetch op de achtergrond, zonder de aanvrager te laten wachten.
+let refreshInFlight = new Set();
+function backgroundRefresh(lat, lng) {
+  const key = nearbyKey(lat, lng);
+  if (refreshInFlight.has(key)) return;
+  refreshInFlight.add(key);
+  console.log('[geo/cache] cache verlopen — automatische verversing voor', key);
+  fetchNearbyRaw(lat, lng)
+    .catch(err => console.warn('[geo/cache] achtergrond-verversing mislukt:', err.message))
+    .finally(() => refreshInFlight.delete(key));
 }
 
 // Alleen cache-check: geen live-fetch. Geeft { ready: true/false } terug
@@ -566,22 +606,37 @@ router.get('/nearby/ready', async (req, res) => {
   const c = parseCoords(req);
   if (!c) return res.status(400).json({ error: 'Ongeldige coördinaten' });
   const cached = await cacheGetAny(nearbyKey(c.lat, c.lng), TTL_NEARBY);
-  res.json({ ready: !!(cached && cached.fresh) });
+  const usable = usableRaw(cached);
+  // Verlopen maar bruikbaar telt als 'klaar' (we serveren de oude data
+  // direct) en start meteen de automatische verversing.
+  if (usable && !cached.fresh) backgroundRefresh(c.lat, c.lng);
+  res.json({ ready: usable });
 });
 
 router.get('/nearby', async (req, res) => {
   const c = parseCoords(req);
   if (!c) return res.status(400).json({ error: 'Ongeldige coördinaten' });
+  const refresh = req.query.refresh === '1';
 
   const cached = await cacheGetAny(nearbyKey(c.lat, c.lng), TTL_NEARBY);
-  if (cached && cached.fresh) return res.json(cached.data);
+  const usable = usableRaw(cached);
+
+  // Cache mag 30 dagen oud worden. Vers → direct serveren. Verlopen →
+  // óók direct serveren (geen wachttijd voor de gebruiker) en op de
+  // achtergrond automatisch volledig verversen. Alleen de
+  // Vernieuwen-knop (refresh=1) wacht op verse data.
+  if (!refresh && usable) {
+    if (!cached.fresh) backgroundRefresh(c.lat, c.lng);
+    return res.json(buildPayload(c.lat, c.lng, cached.data));
+  }
 
   try {
-    res.json(await fetchNearbyLive(c.lat, c.lng));
+    const raw = await fetchNearbyRaw(c.lat, c.lng);
+    res.json(buildPayload(c.lat, c.lng, raw));
   } catch (err) {
     console.error('[geo/nearby]', err.message);
     // Verouderde data is beter dan een foutmelding.
-    if (cached) return res.json(cached.data);
+    if (usable) return res.json(buildPayload(c.lat, c.lng, cached.data));
     res.status(502).json({ error: 'Omgevingsinformatie is tijdelijk niet beschikbaar — probeer het later opnieuw' });
   }
 });
@@ -592,9 +647,9 @@ function prefetchNearby(lat, lng) {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
   cacheGetAny(nearbyKey(lat, lng), TTL_NEARBY)
     .then(hit => {
-      if (hit && hit.fresh) return null;
+      if (usableRaw(hit) && hit.fresh) return null;
       console.log('[geo/prefetch] omgeving voorladen voor', lat.toFixed(2), lng.toFixed(2));
-      return fetchNearbyLive(lat, lng);
+      return fetchNearbyRaw(lat, lng);
     })
     .catch(err => console.warn('[geo/prefetch] mislukt (geen probleem):', err.message));
 }

@@ -1454,7 +1454,26 @@ async function renderOmgeving(id, epoch) {
 
   clear(app);
   app.append(
-    el('a', { href: `#/list/${id}`, class: 'btn btn-sm btn-ghost' }, '← Terug'),
+    el('div', { style: 'display: flex; justify-content: space-between; align-items: center; gap: 8px;' },
+      el('a', { href: `#/list/${id}`, class: 'btn btn-sm btn-ghost' }, '← Terug'),
+      el('button', {
+        class: 'btn btn-sm',
+        title: 'Haal de omgevingsgegevens opnieuw op',
+        onclick: async (e) => {
+          const btn = e.target;
+          btn.disabled = true;
+          btn.textContent = 'Vernieuwen…';
+          try {
+            await api(`/api/geo/nearby?lat=${c.lat}&lng=${c.lng}&refresh=1`);
+            render();
+          } catch (err) {
+            toast(err.message);
+            btn.disabled = false;
+            btn.textContent = '🔄 Vernieuwen';
+          }
+        },
+      }, '🔄 Vernieuwen'),
+    ),
     el('h1', { style: 'margin-top: 8px' }, `In de buurt van ${c.destination || 'je bestemming'}`),
     el('p', { class: 'muted' },
       'Uitjes binnen ± 35 km van je bestemming, afgestemd op je reisgezelschap. ',
