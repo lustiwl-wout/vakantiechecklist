@@ -249,15 +249,56 @@ function classify(el) {
 // een Wikipedia-artikel, website en openingstijden; een obscuur
 // hertenkampje of bosperceel heeft alleen een naam. Zonder externe
 // beoordelingen is dit de beste maat voor 'is dit een échte uitje'.
-// Historic/heritage telt bewust níet mee: een monumentje met een
-// Wikipedia-artikel is nog geen dagje uit.
-function notabilityScore(tags) {
+// Compacte samenvatting van de tags die de validatie nodig heeft.
+// Duplicaten van dezelfde plek (punt + gebied in OSM) worden hierop
+// samengevoegd vóór validatie, zodat metadata van beide varianten telt.
+function liteTags(tags) {
+  const rawSite = tags.website || tags['contact:website'] || null;
+  return {
+    // Een Facebook-/Instagram-pagina is geen echte website — dat is
+    // precies het profiel van heemkundekamertjes en clubjes.
+    website: rawSite && !/facebook\.com|instagram\.com/i.test(rawSite) ? rawSite : null,
+    wikipedia: Boolean(tags.wikipedia),
+    wikidata: Boolean(tags.wikidata),
+    openingHours: Boolean(tags.opening_hours),
+    phone: Boolean(tags.phone || tags['contact:phone']),
+    operator: Boolean(tags.operator || tags.brand),
+    historic: Boolean(tags.historic || tags.heritage || tags['heritage:operator']),
+    memorialArt: Boolean(tags.artwork_type || tags.memorial || tags['memorial:type'] || tags.tourism === 'artwork'),
+    lodgingTag: LODGING_TOURISM_TAGS.has(String(tags.tourism || ''))
+      || tags.building === 'hotel' || tags.leisure === 'summer_camp' || tags.leisure === 'resort',
+    nationalPark: tags.boundary === 'national_park',
+    pettingZoo: tags.zoo === 'petting_zoo',
+  };
+}
+
+function mergeLite(a, b) {
+  return {
+    website: a.website || b.website,
+    wikipedia: a.wikipedia || b.wikipedia,
+    wikidata: a.wikidata || b.wikidata,
+    openingHours: a.openingHours || b.openingHours,
+    phone: a.phone || b.phone,
+    operator: a.operator || b.operator,
+    historic: a.historic || b.historic,
+    memorialArt: a.memorialArt || b.memorialArt,
+    lodgingTag: a.lodgingTag || b.lodgingTag,
+    nationalPark: a.nationalPark || b.nationalPark,
+    pettingZoo: a.pettingZoo || b.pettingZoo,
+  };
+}
+
+// Bekendheids-score. Bekende attracties hebben een Wikipedia-artikel,
+// website en openingstijden; obscure plekjes alleen een naam.
+// Merk-/keten-punt telt niet voor restaurants (anders staat elke
+// fastfoodketen boven de lokale restaurants).
+function notabilityScore(cat, t) {
   let s = 0;
-  if (tags.wikipedia || tags.wikidata) s += 4;
-  if (tags.website || tags['contact:website']) s += 2;
-  if (tags.opening_hours) s += 1;
-  if (tags.phone || tags['contact:phone']) s += 1;
-  if (tags.operator || tags.brand) s += 1;
+  if (t.wikipedia || t.wikidata) s += 4;
+  if (t.website) s += 2;
+  if (t.openingHours) s += 1;
+  if (t.phone) s += 1;
+  if (t.operator && cat !== 'restaurant') s += 1;
   return s;
 }
 
@@ -272,43 +313,59 @@ const MIN_SCORE = {
 // Accommodaties zijn geen uitjes, maar duiken wel op in de resultaten:
 // een groepsaccommodatie met recreatieplas draagt soms óók een
 // water_park- of attraction-tag, en de naam verraadt vaak de rest.
+// Bewust géén 'hotel'/'hostel' in de naam-regex: echte hotels dragen de
+// tourism-tag, en bezienswaardigheden als Hotel New York (Rotterdam)
+// zouden anders sneuvelen.
 const LODGING_TOURISM_TAGS = new Set([
   'hotel', 'guest_house', 'hostel', 'motel', 'apartment',
-  'chalet', 'camp_site', 'caravan_site', 'alpine_hut',
+  'chalet', 'camp_site', 'caravan_site', 'alpine_hut', 'resort', 'holiday_park',
 ]);
-const LODGING_NAME_RE = /groepsaccommodatie|groepsverblijf|vakantiehuis|vakantiewoning|bungalowpark|bed\s*&\s*breakfast|\bb\s?&\s?b\b|\bcamping\b|\bhostel\b|\bpension\b|\bhotel\b/i;
+const LODGING_NAME_RE = /groepsaccommodatie|groepsverblijf|vakantiehuis|vakantiewoning|vakantiepark|recreatiepark|ferienpark|bungalowpark|\bresort\b|bed\s*&\s*breakfast|\bb\s?&\s?b\b|\bcamping\b|\bminicamping\b|\bpension\b/i;
 
-function isLodging(cat, tags) {
-  if (LODGING_TOURISM_TAGS.has(String(tags.tourism || ''))) return true;
-  if (tags.building === 'hotel' || tags.leisure === 'summer_camp') return true;
-  // Naam-check niet voor restaurants: "Restaurant Hotel De Wereld" is
-  // gewoon een restaurant.
-  if (cat !== 'restaurant' && LODGING_NAME_RE.test(String(tags.name || ''))) return true;
+// Bedrijven die zichzelf als attractie of waterpark taggen maar geen
+// dagje uit zijn.
+const ATTRACTION_NAME_BLOCK = /manege|ruitersport|partycentrum|zalencentrum|feestzaal|kinderopvang|kinderdagverblijf/i;
+const WATERPARK_NAME_BLOCK = /zwemschool|zwemles|sportcentrum|sporthal|sportschool/i;
+
+function isLodging(cat, name, t) {
+  // Nationale parken en hotel-zwemparadijzen met dagkaarten (De Bonte
+  // Wever, Preston Palace — herkenbaar aan hun wiki-vermelding) zijn
+  // uitjes, ook al draagt het OSM-object een verblijfs-tag.
+  if (t.nationalPark) return false;
+  if (cat === 'waterpark' && (t.wikipedia || t.wikidata)) return false;
+  if (t.lodgingTag) return true;
+  // Naam-check niet voor restaurants ("Restaurant Hotel De Wereld") en
+  // niet voor plekken met een wiki-vermelding ("Strand Camping Bakkum"
+  // kán een begrip zijn).
+  if (cat !== 'restaurant' && !(t.wikipedia || t.wikidata) && LODGING_NAME_RE.test(name)) return true;
   return false;
 }
 
-function isValidNearbyPoi(cat, tags) {
-  if (!cat || !tags.name) return false;
-  if (isLodging(cat, tags)) return false;
+function isValidNearbyPoi(cat, name, t) {
+  if (!cat || !name) return false;
+  if (t.memorialArt) return false;
+  if (isLodging(cat, name, t)) return false;
+
   if (cat === 'attraction') {
-    // Monumenten, kunstwerken en uitzichtpunten zijn geen dagje uit.
-    if (tags.artwork_type || tags.memorial || tags['memorial:type']
-        || tags.tourism === 'artwork' || tags.historic) {
-      return false;
-    }
-    // Een écht bezoekbare attractie heeft een website of openingstijden;
-    // een Wikipedia-artikel alleen (Poepenhemeltje!) is onvoldoende.
-    if (!(tags.website || tags['contact:website'] || tags.opening_hours)) {
-      return false;
-    }
+    if (ATTRACTION_NAME_BLOCK.test(name)) return false;
+    // Bezoekbaar-signaal vereist: website of openingstijden. Wikipedia
+    // alléén volstaat voor grote bezienswaardigheden zonder kassa
+    // (Oosterscheldekering), maar niet voor monumentjes met een
+    // historic-tag (Poepenhemeltje).
+    return Boolean(t.website || t.openingHours || (t.wikipedia && !t.historic));
   }
-  // Natuur: elk bosperceel staat in OSM als nature_reserve. Alleen echte
-  // wandelbestemmingen: nationale parken, of gebieden met een
-  // Wikipedia-/Wikidata-vermelding.
+  if (cat === 'waterpark' && WATERPARK_NAME_BLOCK.test(name)) return false;
+  // Natuur: elk bosperceel staat in OSM als nature_reserve, en bulk-
+  // imports gaven ze massaal een wikidata-tag. Alleen nationale parken,
+  // gebieden met een écht Wikipedia-artikel, of met een eigen website
+  // (boswachterijen van Staatsbosbeheer).
   if (cat === 'nature') {
-    return tags.boundary === 'national_park' || Boolean(tags.wikipedia || tags.wikidata);
+    return t.nationalPark || t.wikipedia || Boolean(t.website);
   }
-  return notabilityScore(tags) >= (MIN_SCORE[cat] ?? 0);
+  // Kinderboerderijen hebben zelden meer metadata dan openingstijden,
+  // maar zijn geliefde gratis gezinsuitjes — lagere drempel.
+  const min = (cat === 'zoo' && t.pettingZoo) ? 1 : (MIN_SCORE[cat] ?? 0);
+  return notabilityScore(cat, t) >= min;
 }
 
 // ---- routes ----
@@ -376,28 +433,8 @@ router.get('/reverse', async (req, res) => {
   }
 });
 
-// Hetzelfde park staat in OSM vaak dubbel (als punt én als gebied), elk
-// met andere metadata: de één heeft de Wikipedia-verwijzing, de ander de
-// website. Samensmelten in plaats van weggooien, anders raken we velden
-// kwijt (Wildlands verloor zo zijn website).
-function mergeByName(pois) {
-  const byName = new Map();
-  for (const p of pois) {
-    const k = p.name.toLowerCase();
-    const cur = byName.get(k);
-    if (!cur) {
-      byName.set(k, { ...p });
-    } else {
-      cur.website = cur.website || p.website;
-      cur.score = Math.max(cur.score, p.score);
-      cur.distanceKm = Math.min(cur.distanceKm, p.distanceKm);
-    }
-  }
-  return [...byName.values()];
-}
-
 function nearbyKey(lat, lng) {
-  return `nearby:v6:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+  return `nearby:v7:${lat.toFixed(2)}:${lng.toFixed(2)}`;
 }
 
 // Haalt omgevingsdata live op bij Overpass en schrijft hem in de cache.
@@ -414,7 +451,7 @@ async function fetchNearbyLive(lat, lng) {
   if (data.remark) console.warn('[geo/nearby] Overpass remark (deels resultaat):', data.remark);
 
   const radiusByCat = Object.fromEntries(POI_CATEGORIES.map(x => [x.key, x.radiusKm]));
-  const groups = {};
+  const groups = {}; // cat → Map(naam-sleutel → kandidaat)
   const countriesNearby = new Set();
 
   for (const el of elements) {
@@ -425,33 +462,56 @@ async function fetchNearbyLive(lat, lng) {
       continue;
     }
     const cat = classify(el);
-    if (!isValidNearbyPoi(cat, tags)) continue;
+    if (!cat || !tags.name) continue;
     const plat = el.lat ?? (el.center && el.center.lat);
     const plng = el.lon ?? (el.center && el.center.lon);
     if (plat == null) continue;
     const dist = haversineKm(lat, lng, plat, plng);
-    if (dist > (radiusByCat[cat] || 35)) continue;
-    (groups[cat] = groups[cat] || []).push({
-      name: tags.name,
-      distanceKm: Math.round(dist * 10) / 10,
-      website: tags.website || tags['contact:website'] || null,
-      score: notabilityScore(tags),
-    });
+    // Grote gebieden (natuur, strand) hebben hun centroid soms ver van de
+    // rand die bij jou om de hoek ligt — ruimere afstandsdrempel.
+    const maxDist = (radiusByCat[cat] || 35) * ((cat === 'nature' || cat === 'beach') ? 2 : 1);
+    if (dist > maxDist) continue;
+
+    // Samenvoegen vóór validatie: hetzelfde park staat in OSM vaak dubbel
+    // (punt + gebied) met verschillende metadata — de één heeft de wiki-
+    // verwijzing, de ander de website. Alleen mergen als het écht dezelfde
+    // plek is (zelfde naam én < 2 km uit elkaar), anders worden twee
+    // dorpsmusea met dezelfde naam één item met de verkeerde afstand.
+    const byName = (groups[cat] = groups[cat] || new Map());
+    const t = liteTags(tags);
+    const baseKey = tags.name.toLowerCase();
+    let entry = null;
+    for (let i = 0; ; i++) {
+      const k = i === 0 ? baseKey : `${baseKey}#${i}`;
+      const cur = byName.get(k);
+      if (!cur) { entry = { key: k, name: tags.name, distanceKm: dist, t }; byName.set(k, entry); break; }
+      if (Math.abs(cur.distanceKm - dist) < 2) {
+        cur.t = mergeLite(cur.t, t);
+        cur.distanceKm = Math.min(cur.distanceKm, dist);
+        break;
+      }
+    }
   }
 
   const categories = POI_CATEGORIES
-    .filter(cdef => groups[cdef.key] && groups[cdef.key].length)
-    .map(cdef => ({
-      key: cdef.key,
-      label: cdef.label,
-      ages: cdef.ages,
-      activity: cdef.activity,
-      // Bekendste eerst; afstand als tiebreaker. Zo wint Wildlands (met
-      // Wikipedia + website) van een naamloos hertenkampje om de hoek.
-      pois: mergeByName(groups[cdef.key])
+    .map(cdef => {
+      const candidates = groups[cdef.key] ? [...groups[cdef.key].values()] : [];
+      // Valideren ná het samenvoegen, op de gecombineerde metadata.
+      const pois = candidates
+        .filter(c2 => isValidNearbyPoi(cdef.key, c2.name, c2.t))
+        .map(c2 => ({
+          name: c2.name,
+          distanceKm: Math.round(c2.distanceKm * 10) / 10,
+          website: c2.t.website,
+          score: notabilityScore(cdef.key, c2.t),
+        }))
+        // Bekendste eerst; afstand als tiebreaker. Zo wint Wildlands (met
+        // Wikipedia + website) van een naamloos hertenkampje om de hoek.
         .sort((a, b) => (b.score - a.score) || (a.distanceKm - b.distanceKm))
-        .slice(0, 15),
-    }));
+        .slice(0, 15);
+      return { key: cdef.key, label: cdef.label, ages: cdef.ages, activity: cdef.activity, pois };
+    })
+    .filter(cdef => cdef.pois.length);
 
   // Buurlanden: alle admin-grenzen binnen 30 km behalve het land zelf.
   const neighbours = [...countriesNearby]
