@@ -1428,7 +1428,14 @@ async function renderOmgeving(id) {
           e.target.disabled = true;
           try {
             const acts = [...new Set([...currentActivities, 'daytrip'])];
-            const res = await api(`/api/checklists/${id}`, { method: 'PATCH', body: { activities: acts } });
+            const res = await api(`/api/checklists/${id}`, {
+              method: 'PATCH',
+              body: {
+                activities: acts,
+                // Land-specifieke grens-items (milieuvignet, contant geld…)
+                borderCountries: others.map(n => n.code),
+              },
+            });
             if ((res.suggestions || []).length || (res.removals || []).length) {
               renderSuggestions(id, res.suggestions || [], res.removals || []);
             } else {

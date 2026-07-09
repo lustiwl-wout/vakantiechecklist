@@ -89,6 +89,7 @@ function generateItems({
   medications = [],
   quantities = {},
   rentalCar = false,
+  borderCountries = [],
 }) {
   const items = [];
   const add = (text, category, quantity = 1, traveler = null) => {
@@ -589,6 +590,26 @@ function generateItems({
   if (transport === 'plane') add('Ruimbagage wegen (max. gewicht checken)', 'Voor vertrek');
   if (!home && land && !land.ehic) {
     add('Werelddekking pinpas aanzetten (geo-blokkering)', 'Voor vertrek');
+  }
+
+  // ===== Dagje over de grens (vanaf de Omgeving-pagina) =====
+  // Land-specifieke verplichtingen voor buurlanden op het programma.
+  const hasCar = transport === 'car' || rentalCar;
+  const VIGNETTE_COUNTRIES = new Set(['at', 'ch', 'si', 'cz', 'sk', 'hu']);
+  for (const code of (Array.isArray(borderCountries) ? borderCountries : [])) {
+    const buur = getCountry(code);
+    if (!buur || buur.code === (land && land.code)) continue;
+    if (hasCar) {
+      if (buur.code === 'de') {
+        add('Umweltplakette (milieuvignet) voor Duitse steden regelen', 'Voor vertrek');
+        add('Verbanddoos (verplicht in Duitsland en Oostenrijk)', 'Transport');
+      }
+      if (buur.code === 'fr') add("Crit'Air-vignet aanvragen (verplicht in veel Franse steden)", 'Voor vertrek');
+      if (buur.code === 'be') add('LEZ-zones België checken (Antwerpen, Gent, Brussel)', 'Voor vertrek');
+      if (VIGNETTE_COUNTRIES.has(buur.code)) add(`Vignet voor ${buur.name} regelen`, 'Voor vertrek');
+    }
+    if (!buur.euro) add(`Contant geld voor ${buur.name} (geen euro)`, 'Geld');
+    if (!buur.idCard) add(`Paspoort-eisen ${buur.name} checken voor het grens-dagje`, 'Voor vertrek');
   }
   if (meds.length && !home) {
     add('Medicijnverklaring checken (voor sommige medicijnen verplicht)', 'Voor vertrek');

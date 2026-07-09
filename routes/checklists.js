@@ -58,6 +58,11 @@ function cleanWeather(input) {
   return [...new Set(input.map(String).filter(v => valid.has(v)))];
 }
 
+function cleanBorderCountries(input) {
+  if (!Array.isArray(input)) return [];
+  return [...new Set(input.map(v => String(v).toLowerCase()).filter(v => getCountry(v)))].slice(0, 8);
+}
+
 function cleanQuantities(input) {
   if (!input || typeof input !== 'object') return {};
   const out = {};
@@ -195,6 +200,10 @@ router.patch('/:id', async (req, res) => {
   if ('rentalCar' in req.body) set('rental_car', req.body.rentalCar === true);
   if ('lat' in req.body) set('lat', Number.isFinite(Number(req.body.lat)) && Math.abs(req.body.lat) <= 90 ? Number(req.body.lat) : null);
   if ('lng' in req.body) set('lng', Number.isFinite(Number(req.body.lng)) && Math.abs(req.body.lng) <= 180 ? Number(req.body.lng) : null);
+  if ('borderCountries' in req.body) {
+    updates.push(`border_countries = $${p++}::jsonb`);
+    params.push(JSON.stringify(cleanBorderCountries(req.body.borderCountries)));
+  }
   if ('startDate' in req.body) set('start_date', req.body.startDate || null);
   if ('endDate' in req.body) set('end_date', req.body.endDate || null);
   if ('transport' in req.body) set('transport', req.body.transport || null);
@@ -232,6 +241,7 @@ router.patch('/:id', async (req, res) => {
     accommodation: c.accommodation,
     activities: c.activities,
     rentalCar: c.rental_car,
+    borderCountries: c.border_countries,
   });
 
   const { rows: fresh } = await pool.query('SELECT * FROM checklists WHERE id = $1', [checklist.id]);
