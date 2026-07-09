@@ -827,12 +827,14 @@ function renderSuggestions(id, suggestions, removals = []) {
     }
   });
 
-  app.append(
-    el('h1', {}, 'Lijst bijwerken?'),
+  // Let op: app.append(null) rendert letterlijk de tekst 'null' —
+  // voorwaardelijke elementen dus altijd eerst wegfilteren.
+  app.append(...[
+    el('h1', {}, 'Inpaklijst bijwerken?'),
     el('p', { class: 'muted' },
       'Op basis van je gewijzigde reisgegevens stellen we het volgende voor. ',
       'Vink uit wat je niet wilt — de rest van je lijst blijft ongewijzigd.'),
-    addSection ? el('h2', {}, `Toevoegen (${suggestions.length})`) : null,
+    addSection ? el('h2', {}, `Spullen erbij (${suggestions.length})`) : null,
     addSection ? addSection.wrap : null,
     removeSection ? el('h2', { class: 'removal-heading' }, `Niet meer nodig (${removals.length})`) : null,
     removeSection ? el('p', { class: 'muted' }, 'Deze items horen bij je oude reisgegevens. Aangevinkt = van de lijst halen.') : null,
@@ -841,7 +843,7 @@ function renderSuggestions(id, suggestions, removals = []) {
       el('a', { href: `#/list/${id}`, class: 'btn' }, 'Overslaan'),
       applyBtn,
     ),
-  );
+  ].filter(Boolean));
 }
 
 // ---------- checklist view ----------
@@ -1292,7 +1294,8 @@ async function renderChecklist(id) {
       el('div', { class: 'progress' }, progressBar),
       progressLabel,
     ),
-    travelerTabs(),
+    // travelerTabs() kan null zijn; append(null) rendert 'null' als tekst.
+    ...[travelerTabs()].filter(Boolean),
     addForm,
     itemsContainer,
   );
@@ -1441,7 +1444,7 @@ async function renderOmgeving(id) {
     el('h1', { style: 'margin-top: 8px' }, `In de buurt van ${c.destination || 'je bestemming'}`),
     el('p', { class: 'muted' },
       'Uitjes binnen ± 35 km van je bestemming, afgestemd op je reisgezelschap. ',
-      'Zet iets op je programma en we stellen meteen de bijbehorende spullen voor.'),
+      'Zet iets op je programma, dan zetten we de spullen die je ervoor nodig hebt meteen klaar op je inpaklijst.'),
   );
 
   // Grens-hint: buurland dichtbij → dagje over de grens.
@@ -1475,7 +1478,7 @@ async function renderOmgeving(id) {
             }
           } catch (err) { e.target.disabled = false; toast(err.message); }
         },
-      }, currentActivities.has('daytrip') ? 'Staat al op je programma' : '+ Zet dagtrip op mijn programma'),
+      }, currentActivities.has('daytrip') ? 'Staat al op je programma' : '+ Plan grens-dagje — vul mijn inpaklijst aan'),
     ));
   }
 
@@ -1567,7 +1570,7 @@ async function renderOmgeving(id) {
             }
           } catch (err) { e.target.disabled = false; toast(err.message); }
         },
-      }, already ? 'Staat al op je programma' : '+ Zet op mijn programma'),
+      }, already ? 'Staat al op je programma' : '+ Zet op programma — vul mijn inpaklijst aan'),
     );
     app.append(card);
   }
