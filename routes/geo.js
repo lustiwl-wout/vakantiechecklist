@@ -219,7 +219,10 @@ const POI_CATEGORIES = [
   { key: 'nature', selectors: ['["boundary"="national_park"]', '["leisure"="nature_reserve"]'], radiusKm: 35, cap: 80, label: 'Natuur & wandelgebieden', ages: 'alle leeftijden', activity: 'hiking' },
   { key: 'museum', selectors: ['["tourism"="museum"]'], radiusKm: 25, cap: 100, label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural' },
   { key: 'attraction', selectors: ['["tourism"="attraction"]'], radiusKm: 20, cap: 80, label: 'Bezienswaardigheden & uitjes', ages: 'alle leeftijden', activity: 'daytrip' },
-  { key: 'beach', selectors: ['["natural"="beach"]'], radiusKm: 25, cap: 40, label: 'Stranden', ages: 'alle leeftijden', activity: 'beach' },
+  // Zwemplassen dragen zelden natural=beach: recreatieplassen staan als
+  // leisure=beach_resort (dagstrand met voorzieningen) of
+  // leisure=swimming_area (aangewezen zwemwater) — Het Blauwe Meer-klasse.
+  { key: 'beach', selectors: ['["natural"="beach"]', '["leisure"="beach_resort"]', '["leisure"="swimming_area"]'], radiusKm: 25, cap: 40, label: 'Stranden & zwemplassen', ages: 'alle leeftijden', activity: 'beach' },
   { key: 'restaurant', selectors: ['["amenity"="restaurant"]'], radiusKm: 8, cap: 40, label: 'Restaurants', ages: 'alle leeftijden', activity: 'nightlife' },
 ];
 
@@ -263,7 +266,7 @@ function classify(el) {
           && (t.sport === 'swimming' || /zwembad|bosbad|zwemparadijs/i.test(String(t.name || ''))))) return 'waterpark';
   if (t.boundary === 'national_park' || t.leisure === 'nature_reserve') return 'nature';
   if (t.tourism === 'museum') return 'museum';
-  if (t.natural === 'beach') return 'beach';
+  if (t.natural === 'beach' || t.leisure === 'beach_resort' || t.leisure === 'swimming_area') return 'beach';
   if (t.amenity === 'restaurant') return 'restaurant';
   // 'attraction' als laatste: veel POI's hebben tourism=attraction als
   // extra tag naast een specifiekere.
@@ -387,7 +390,7 @@ const CATEGORY_GENERIC_OK = {
   zoo: new Set(['dierentuin']),
   themepark: new Set(['pretpark', 'attractiepark']),
   museum: new Set(['museum']),
-  beach: new Set(['strand', 'beach']),
+  beach: new Set(['strand', 'beach', 'zwemplas', 'recreatieplas', 'zwemstrand']),
   restaurant: new Set(['restaurant', 'café', 'cafe']),
 };
 
@@ -515,7 +518,7 @@ router.get('/reverse', async (req, res) => {
 // dán mist de gecachte ruwe data elementsoorten en is een verse fetch
 // nodig. Filter-/score-wijzigingen vereisen GEEN nieuwe fetch: die
 // draaien bij het lezen over de gecachte ruwe data.
-const QUERY_VERSION = 4;
+const QUERY_VERSION = 5;
 
 function nearbyKey(lat, lng) {
   return `nearby:raw:${lat.toFixed(2)}:${lng.toFixed(2)}`;
