@@ -1432,6 +1432,7 @@ async function renderOmgeving(id) {
   }
 
   const c = data.checklist;
+  const destination = c.destination;
   const currentActivities = new Set(Array.isArray(c.activities) ? c.activities : []);
 
   clear(app);
@@ -1511,7 +1512,7 @@ async function renderOmgeving(id) {
         return;
       }
       for (const p of visible) {
-        const mapsQuery = encodeURIComponent([p.name, c.destination].filter(Boolean).join(', '));
+        const mapsQuery = encodeURIComponent([p.name, destination].filter(Boolean).join(', '));
         const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`;
         poiListEl.append(el('li', {},
           el('span', { class: 'poi-name' },
