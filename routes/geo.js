@@ -654,5 +654,47 @@ function prefetchNearby(lat, lng) {
     .catch(err => console.warn('[geo/prefetch] mislukt (geen probleem):', err.message));
 }
 
+// Diagnose: zoek op naam rond een punt en laat per gevonden OSM-object
+// zien waarom het wel/niet in het omgevingsadvies belandt. Voor het
+// onderzoeken van 'ik mis plek X'-meldingen zonder te gissen naar tags.
+router.get('/debug', async (req, res) => {
+  const c = parseCoords(req);
+  const q = String(req.query.q || '').trim().slice(0, 60);
+  if (!c || q.length < 2) return res.status(400).json({ error: 'lat, lng en q zijn verplicht' });
+
+  try {
+    const safe = q.replace(/[^\p{L}\p{N} \-']/gu, '');
+    const data = await overpassFetch(`[out:json][timeout:15];
+nwr["name"~"${safe}",i](around:40000,${c.lat},${c.lng});
+out center tags 25;`);
+
+    const results = (data.elements || []).map(el => {
+      const tags = el.tags || {};
+      const la = el.lat ?? (el.center && el.center.lat) ?? null;
+      const lo = el.lon ?? (el.center && el.center.lon) ?? null;
+      const cat = classify({ tags });
+      const t = liteTags(tags);
+      const name = tags.name || '';
+      return {
+        name,
+        type: el.type,
+        distanceKm: la != null ? Math.round(haversineKm(c.lat, c.lng, la, lo) * 10) / 10 : null,
+        category: cat,
+        verdict: {
+          valid: cat ? isValidNearbyPoi(cat, name, t) : false,
+          lodging: cat ? isLodging(cat, name, t) : null,
+          genericName: hasGenericName(name, t),
+          score: cat ? notabilityScore(cat, t) : null,
+          minRequired: cat ? (MIN_SCORE[cat] ?? 0) : null,
+        },
+        tags,
+      };
+    });
+    res.json({ query: q, around: c, count: results.length, results });
+  } catch (err) {
+    res.status(502).json({ error: `Diagnose mislukt: ${err.message}` });
+  }
+});
+
 module.exports = router;
 module.exports.prefetchNearby = prefetchNearby;
