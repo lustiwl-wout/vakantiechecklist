@@ -183,7 +183,7 @@ function isValidPlaceResult(r) {
 }
 
 function createCountryPlaceDedupeKey(country, place) {
-  return `${country}:${place.toLowerCase()}`;
+  return `${String(country || '').toLowerCase()}:${String(place || '').toLowerCase()}`;
 }
 
 // Overpass-categorieën → NL-labels + leeftijdsadvies + activiteit-koppeling.
@@ -276,23 +276,24 @@ router.get('/search', async (req, res) => {
       `/search?format=jsonv2&limit=5&addressdetails=1&accept-language=nl&q=${encodeURIComponent(q)}`
     );
     const seenCountryPlacePairs = new Set();
-    const results = data
-      .filter(isValidPlaceResult)
-      .map(r => ({
+    const results = [];
+    for (const r of data) {
+      if (!isValidPlaceResult(r)) continue;
+      const country = matchCountryCode(r.address && r.address.country_code);
+      const place = placeFromAddress(r.address, r.name);
+      // Zonder land + plaats kunnen we de zoekhit niet betrouwbaar invullen.
+      if (!country || !place) continue;
+      const dedupeKey = createCountryPlaceDedupeKey(country, place);
+      if (seenCountryPlacePairs.has(dedupeKey)) continue;
+      seenCountryPlacePairs.add(dedupeKey);
+      results.push({
         label: r.display_name,
         lat: Number(r.lat),
         lng: Number(r.lon),
-        country: matchCountryCode(r.address && r.address.country_code),
-        place: placeFromAddress(r.address, r.name),
-      }))
-      // Zonder land + plaats kunnen we de zoekhit niet betrouwbaar invullen.
-      .filter(r => r.country && r.place)
-      .filter(r => {
-        const dedupeKey = createCountryPlaceDedupeKey(r.country, r.place);
-        if (seenCountryPlacePairs.has(dedupeKey)) return false;
-        seenCountryPlacePairs.add(dedupeKey);
-        return true;
+        country,
+        place,
       });
+    }
     const payload = { results };
     cacheSet(key, payload);
     res.json(payload);
