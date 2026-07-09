@@ -669,10 +669,17 @@ router.get('/debug', async (req, res) => {
 
   try {
     const safe = q.replace(/[^\p{L}\p{N} \-']/gu, '');
-    // bbox is essentieel: een naam-regex kan geen index gebruiken, dus
-    // zonder gebiedsbegrenzing scant Overpass de hele planeet (timeout).
+    // Eerst op tag-soort filteren (geïndexeerd), dan pas de naam-regex:
+    // een kale naam-zoektocht moet anders álle benoemde objecten in het
+    // gebied langs — rond de Randstad zijn dat er miljoenen (timeout).
+    // We zoeken dus alleen binnen de tag-soorten die de app kent.
+    const kinds = ['["tourism"]', '["leisure"]', '["zoo"]', '["amenity"="restaurant"]',
+      '["natural"="beach"]', '["boundary"="national_park"]'];
+    const sel = kinds.map(k => `nwr${k}["name"~"${safe}",i];`).join('\n  ');
     const data = await overpassFetch(`[out:json][timeout:15][bbox:${bboxFor(c.lat, c.lng, 40)}];
-nwr["name"~"${safe}",i];
+(
+  ${sel}
+);
 out center tags 25;`);
 
     const results = (data.elements || []).map(el => {
