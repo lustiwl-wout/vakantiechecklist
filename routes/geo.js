@@ -543,6 +543,7 @@ async function fetchNearbyLive(lat, lng) {
 
   const payload = { categories, neighbours: neighbours.map(({ code, name, euro, idCard }) => ({ code, name, euro, idCard })) };
   await cacheSet(nearbyKey(lat, lng), payload);
+  console.log(`[geo/cache] omgeving opgeslagen: ${nearbyKey(lat, lng)} (${categories.length} categorieën)`);
   return payload;
 }
 

@@ -121,8 +121,12 @@ async function init() {
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS border_countries JSONB NOT NULL DEFAULT '[]';
   `);
 
-  // Ruim heel oude geo-cache op (best effort).
+  // Ruim heel oude geo-cache op (best effort) en log de stand, zodat in
+  // de Render-logs zichtbaar is of de omgevings-cache gevuld raakt.
   await pool.query("DELETE FROM geo_cache WHERE fetched_at < NOW() - interval '90 days'").catch(() => {});
+  await pool.query('SELECT COUNT(*)::int AS n FROM geo_cache')
+    .then(r => console.log(`[geo/cache] ${r.rows[0].n} locatie(s) in de database-cache`))
+    .catch(() => {});
 }
 
 module.exports = { pool, init };
