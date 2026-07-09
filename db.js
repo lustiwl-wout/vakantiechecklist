@@ -100,6 +100,7 @@ async function init() {
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS country TEXT;
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS rental_car BOOLEAN NOT NULL DEFAULT FALSE;
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS removed_texts JSONB NOT NULL DEFAULT '[]';
+    ALTER TABLE items ADD COLUMN IF NOT EXISTS origin TEXT;
   `);
   await convertLegacyData();
 }

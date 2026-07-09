@@ -112,11 +112,11 @@ router.post('/', async (req, res) => {
       const params = [];
       generated.forEach((it, idx) => {
         const base = idx * 6;
-        params.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`);
+        params.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, 'generated')`);
         values.push(checklist.id, it.text, it.category, it.position, it.quantity || 1, it.traveler || null);
       });
       await client.query(
-        `INSERT INTO items (checklist_id, text, category, position, quantity, traveler) VALUES ${params.join(', ')}`,
+        `INSERT INTO items (checklist_id, text, category, position, quantity, traveler, origin) VALUES ${params.join(', ')}`,
         values
       );
     }
@@ -211,7 +211,7 @@ router.patch('/:id', async (req, res) => {
   const { rows: fresh } = await pool.query('SELECT * FROM checklists WHERE id = $1', [checklist.id]);
   const cur = fresh[0];
   const { rows: existing } = await pool.query(
-    'SELECT id, text, category, is_checked FROM items WHERE checklist_id = $1', [checklist.id]
+    'SELECT id, text, category, is_checked, origin FROM items WHERE checklist_id = $1', [checklist.id]
   );
   const norm = s => s.trim().toLowerCase();
   const have = new Set(existing.map(r => norm(r.text)));
@@ -228,10 +228,12 @@ router.patch('/:id', async (req, res) => {
     .filter(it => !(hasMedItems && it.text === 'Persoonlijke medicijnen'))
     .map(({ text, category, quantity, traveler }) => ({ text, category, quantity, traveler }));
 
-  // Verwijder-kandidaten: destijds door de generator geplaatst (staat in de
-  // oude generator-uitvoer) maar niet meer in de nieuwe.
+  // Verwijder-kandidaten: destijds door de generator geplaatst en niet
+  // meer in de nieuwe uitvoer. Herkenning via het origin-veld; voor
+  // oudere items (origin onbekend) via de oude generator-uitvoer.
   const removals = existing
-    .filter(r => oldTexts.has(norm(r.text)) && !newTexts.has(norm(r.text)))
+    .filter(r => (r.origin === 'generated' || oldTexts.has(norm(r.text))) && r.origin !== 'user')
+    .filter(r => !newTexts.has(norm(r.text)))
     .map(({ id, text, category, is_checked }) => ({ id, text, category, is_checked }));
 
   res.json({ ok: true, suggestions, removals });
@@ -259,10 +261,10 @@ router.post('/:id/items', async (req, res) => {
 
   // Positie in hetzelfde statement bepalen: geen race bij gelijktijdige adds.
   const { rows } = await pool.query(
-    `INSERT INTO items (checklist_id, text, category, position, quantity, traveler)
+    `INSERT INTO items (checklist_id, text, category, position, quantity, traveler, origin)
      VALUES ($1, $2, $3,
              (SELECT COALESCE(MAX(position), -1) + 1 FROM items WHERE checklist_id = $1),
-             $4, $5)
+             $4, $5, 'user')
      RETURNING id, text, category, is_checked, position, quantity, packed, traveler`,
     [checklist.id, text, category, quantity, traveler]
   );
@@ -298,11 +300,11 @@ router.post('/:id/items/bulk', async (req, res) => {
   const values = [];
   cleaned.forEach((it, idx) => {
     const base = idx * 6;
-    params.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`);
+    params.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, 'generated')`);
     values.push(checklist.id, it.text, it.category, ++position, it.quantity, it.traveler);
   });
   const { rows } = await pool.query(
-    `INSERT INTO items (checklist_id, text, category, position, quantity, traveler)
+    `INSERT INTO items (checklist_id, text, category, position, quantity, traveler, origin)
      VALUES ${params.join(', ')}
      RETURNING id, text, category, is_checked, position, quantity, packed, traveler`,
     values
@@ -407,8 +409,8 @@ router.post('/:id/duplicate', async (req, res) => {
     );
     const newId = cl[0].id;
     await client.query(
-      `INSERT INTO items (checklist_id, text, category, position, quantity, traveler)
-       SELECT $2, text, category, position, quantity, traveler FROM items WHERE checklist_id = $1 ORDER BY position, id`,
+      `INSERT INTO items (checklist_id, text, category, position, quantity, traveler, origin)
+       SELECT $2, text, category, position, quantity, traveler, origin FROM items WHERE checklist_id = $1 ORDER BY position, id`,
       [checklist.id, newId]
     );
     await client.query('COMMIT');

@@ -85,6 +85,7 @@ function generateItems({
   const nPpl = Math.max(1, travelers.length);
   const nAdults = Math.max(1, travelers.filter(isAdult).length);
   const nTeensPlus = Math.max(1, travelers.filter(t => age(t) >= 13).length);
+  const nFivePlus = Math.max(1, travelers.filter(t => age(t) >= 5).length);
   const nBabies = travelers.filter(isBaby).length;
   const nDiaperKids = travelers.filter(t => age(t) < 3).length; // luierleeftijd
   const hasBaby = nBabies > 0;
@@ -93,7 +94,7 @@ function generateItems({
   const hasChild = travelers.some(isChild);
   const hasYoungKids = hasBaby || hasToddler || hasChild;
   const hasMinor = travelers.some(t => age(t) < 18);
-  const hasBuggyKid = travelers.some(t => age(t) < 4);
+  const hasBuggyKid = travelers.some(t => age(t) < 5);
   const hasSenior = travelers.some(isSenior);
 
   const w = new Set(Array.isArray(weather) ? weather : []);
@@ -145,7 +146,7 @@ function generateItems({
 
   // ===== Elektronica =====
   eachTraveler((t, trav, label) => {
-    if (age(t) >= 13) add(`Telefoon + oplader${label}`, 'Elektronica', 1, trav);
+    if (age(t) >= 8) add(`Telefoon + oplader${label}`, 'Elektronica', 1, trav);
   });
   add('Powerbank', 'Elektronica');
   if (land && land.plug !== 'eu' && !home) {
@@ -153,7 +154,7 @@ function generateItems({
   }
   if (!land && !home) add('Reisstekker / wereldstekker (controleer het type)', 'Elektronica');
   add('Multistekker (hotels hebben vaak weinig contacten)', 'Elektronica');
-  if (days >= 4) add('Koptelefoon / oortjes', 'Elektronica', nTeensPlus);
+  if (days >= 4) add('Koptelefoon / oortjes', 'Elektronica', nFivePlus);
   add('Camera + oplader / extra geheugenkaart', 'Elektronica');
   add('Reserve-oplaadkabel', 'Elektronica');
   if (waterFun) add('Waterdichte hoes / zakje voor telefoon', 'Elektronica');
@@ -182,6 +183,7 @@ function generateItems({
     if (effBottoms > 0) add(`Broeken / rokken${label}`, 'Kleding', effBottoms, trav);
     add(`Pyjama${label}`, 'Kleding', 1, trav);
     add(`Comfortabele schoenen${label}`, 'Kleding', 1, trav);
+    if (age(t) >= 5) add(`Riem / ceintuur${label}`, 'Kleding', 1, trav);
   });
 
   // ===== Kleding: weer, per reiziger =====
@@ -224,6 +226,15 @@ function generateItems({
   });
   if (has('rainy')) add('Paraplu', 'Kleding', Math.min(nPpl, 2));
 
+  // Geen weer aangevinkt? Dan tóch een jas — geen enkele paklijst is
+  // compleet zonder — plus een taak om het weerbericht na te kijken.
+  if (w.size === 0) {
+    eachTraveler((t, trav, label) => {
+      if (!isBaby(t)) add(`Jas (check het weerbericht)${label}`, 'Kleding', 1, trav);
+    });
+    add('Weerbericht checken en kleding aanvullen', 'Voor vertrek');
+  }
+
   // ===== Verzorging =====
   add('Tandenborstel', 'Verzorging', nPpl);
   add('Tandpasta', 'Verzorging');
@@ -263,7 +274,7 @@ function generateItems({
   } else {
     add('Persoonlijke medicijnen', 'Reisapotheek');
   }
-  add('EHBO-set (pleisters, blarenpleisters, paracetamol)', 'Reisapotheek');
+  add('EHBO-set (pleisters, blarenpleisters, paracetamol, wondontsmetting, pincet)', 'Reisapotheek');
   add('Diarreemiddel / ORS', 'Reisapotheek');
   add('Antihistamine / hooikoortsmedicatie (indien nodig)', 'Reisapotheek');
   if (hasYoungKids) {
@@ -271,8 +282,11 @@ function generateItems({
     add('Kinderparacetamol (zetpillen of drank)', 'Reisapotheek');
   }
   if (transport === 'car' && hasYoungKids) add('Reisziektetabletten voor kinderen', 'Reisapotheek');
-  if (doesAct('hiking')) add('Teken-pincet', 'Reisapotheek');
-  if (hasSenior) add('Extra medicatie + recepten (senior)', 'Reisapotheek');
+  if (doesAct('hiking') || accommodation === 'camping') add('Teken-pincet', 'Reisapotheek');
+  if (hasSenior) {
+    add('Extra medicatie + recepten (senior)', 'Reisapotheek');
+    add('Medicijn-doseerdoos (weekorganizer)', 'Reisapotheek');
+  }
 
   // ===== Accommodatie =====
   if (accommodation === 'camping') {
@@ -283,14 +297,25 @@ function generateItems({
     add('Kookspullen / brander + gas', 'Accommodatie');
     add('Aansteker / lucifers', 'Accommodatie');
     add('Servies en bestek', 'Accommodatie');
+    add('Keukenmes + snijplank', 'Accommodatie');
+    add('Afwasborstel + teiltje', 'Accommodatie');
     add('Theedoeken + afwasmiddel', 'Accommodatie');
+    add('Keukenrol', 'Accommodatie');
+    add('Blik- en flesopener', 'Accommodatie');
+    add('Olie, zout, peper en kruiden', 'Accommodatie');
+    add('Koffie / thee voor de eerste ochtend', 'Accommodatie');
+    add('WC-papier', 'Accommodatie');
+    add('Vuilniszakken', 'Accommodatie');
+    add('Kussen', 'Accommodatie', nPpl);
     add('CEE-stekker / verlengsnoer voor camping-stroom', 'Accommodatie');
     add('Waslijn + knijpers', 'Accommodatie');
     add('Handdoeken', 'Accommodatie', nPpl);
+    add('Föhn', 'Accommodatie');
   }
   if (accommodation === 'house') {
     add('Handdoeken (check of inbegrepen)', 'Accommodatie', nPpl);
     add('Beddengoed (check of inbegrepen)', 'Accommodatie');
+    add('Föhn (check of aanwezig)', 'Accommodatie');
     add('Vaatwastabletten / afwasmiddel', 'Accommodatie');
     add('WC-papier (eerste avond)', 'Accommodatie');
     add('Vuilniszakken', 'Accommodatie');
@@ -315,7 +340,11 @@ function generateItems({
       add(`Zwemkleding${label}`, 'Activiteiten', 1, trav);
       add(`Badslippers${label}`, 'Activiteiten', 1, trav);
     });
-    if (hasToddler) add('Zwembandjes / puddle jumper', 'Activiteiten');
+    // Zwemvaardigheid hangt niet aan leeftijd: laat het oordeel bij de
+    // ouder, tot en met de basisschoolleeftijd.
+    if (hasToddler || hasChild) {
+      add('Zwembandjes / zwemvest (voor kinderen zonder zwemdiploma)', 'Activiteiten');
+    }
     if (nDiaperKids) add('Zwemluiers (pakje)', 'Activiteiten', nDiaperKids);
     add('Zwem-/strandhanddoek', 'Activiteiten', nPpl);
   }
@@ -324,6 +353,7 @@ function generateItems({
   }
   if (doesAct('beach')) {
     add('Strandtas', 'Activiteiten');
+    add('Koeltasje met drinken', 'Activiteiten');
     eachTraveler((t, trav, label) => add(`Waterschoenen${label}`, 'Activiteiten', 1, trav));
     if (hasToddler || hasChild) add('Strandspeelgoed (emmer, schepjes)', 'Activiteiten');
     if (hasBaby) add('Strandtent / UV-tent voor baby', 'Activiteiten');
@@ -338,26 +368,37 @@ function generateItems({
   }
   if (doesAct('hiking')) {
     eachTraveler((t, trav, label) => {
+      if (age(t) < 5) return; // baby's/peuters lopen niet mee — die gaan in de draagzak
       add(`Wandelschoenen${label}`, 'Activiteiten', 1, trav);
       add(`Wandelsokken${label}`, 'Activiteiten', 2, trav);
     });
-    add('Dagrugzak', 'Activiteiten');
+    if (hasBuggyKid) add('Draagzak / rugdrager voor het wandelen', 'Activiteiten');
+    add('Dagrugzak', 'Activiteiten', Math.max(1, travelers.filter(t => age(t) >= 8).length));
     add('Bidon / waterfles', 'Activiteiten', nPpl);
   }
   if (doesAct('skiing')) {
     eachTraveler((t, trav, label) => {
-      if (isBaby(t)) return;
+      if (age(t) < 3) return; // skiën begint doorgaans vanaf ± 3-4 jaar
       add(`Ski-/snowboardjas en -broek${label}`, 'Activiteiten', 1, trav);
       add(`Skihandschoenen${label}`, 'Activiteiten', 1, trav);
       add(`Skibril${label}`, 'Activiteiten', 1, trav);
       add(`Skihelm${label}`, 'Activiteiten', 1, trav);
       add(`Skisokken${label}`, 'Activiteiten', 2, trav);
       add(`Col / nekwarmer${label}`, 'Activiteiten', 1, trav);
+      add(`Warme waterdichte schoenen / snowboots${label}`, 'Kleding', 1, trav);
     });
-    add('Skipas / huurbevestiging', 'Activiteiten', travelers.filter(t => !isBaby(t)).length || 1);
+    add('Skipas / huurbevestiging', 'Activiteiten', travelers.filter(t => age(t) >= 4).length || 1);
+    if (transport === 'car') {
+      add("Ski's / snowboard + skischoenen (of huren ter plekke)", 'Activiteiten');
+      add('Skibox / dakdragers', 'Transport');
+    }
   }
   if (doesAct('cycling')) {
-    eachTraveler((t, trav, label) => add(`Fietshelm${label}`, 'Activiteiten', 1, trav));
+    eachTraveler((t, trav, label) => {
+      if (age(t) < 1) return;
+      add(`Fietshelm${label}`, 'Activiteiten', 1, trav);
+    });
+    if (hasBuggyKid) add('Fietszitje of fietskar (of huren)', 'Activiteiten');
     add('Comfortabele kleding voor fietsen', 'Activiteiten');
     add('Bidon / waterfles', 'Activiteiten', nPpl);
   }
@@ -417,9 +458,16 @@ function generateItems({
     if (has('cold', 'freezing')) add('Voetenzak / warm pak voor de buggy', 'Baby & kids');
   }
   if (hasToddler) {
+    add('Luierbroekjes / nachtluiers (indien nog niet zindelijk)', 'Baby & kids');
+    add('Plaspotje voor onderweg (indien net zindelijk)', 'Baby & kids');
     add('Reservekleding peuter (per dagdeel)', 'Baby & kids', Math.min(days * 2, 20));
     add('Speelgoed / boekjes', 'Baby & kids');
-    add('Tussendoortjes', 'Baby & kids');
+  }
+  if (hasChild) {
+    add('Reservekleding kind', 'Baby & kids', 3);
+  }
+  if (hasToddler || hasChild) {
+    add('Tussendoortjes voor de kinderen', 'Baby & kids');
   }
   if (hasChild) {
     add('Knuffel / favoriet speelgoed', 'Baby & kids');
@@ -427,7 +475,7 @@ function generateItems({
     add('Kleurboek + kleurpotloden', 'Baby & kids');
     add('Tablet + oplader (films vooraf downloaden)', 'Baby & kids');
   }
-  if ((hasChild || hasToddler) && (transport === 'car' || transport === 'train')) {
+  if ((hasChild || hasToddler) && ['car', 'train', 'plane'].includes(transport)) {
     add('Spelletjes / boekjes voor onderweg', 'Baby & kids');
   }
   if (hasYoungKids && doesAct('themepark')) {
@@ -438,9 +486,20 @@ function generateItems({
   if (transport === 'plane') {
     add('Vloeistoffen <100ml in transparant zakje', 'Transport');
     add('Powerbank in handbagage (niet in ruim!)', 'Transport');
-    add('Nekkussen + oogmasker + oordoppen', 'Transport', nPpl);
+    add('Medicijnen in handbagage (niet in ruim)', 'Transport');
+    add('Setje reservekleding in handbagage (bij vertraagde koffer)', 'Transport');
+    add('Waardevolle spullen + documenten in handbagage', 'Transport');
+    add('Bagagelabels met naam en adres', 'Transport', nPpl);
+    add('Nekkussen + oogmasker + oordoppen', 'Transport', Math.max(1, nPpl - nBabies));
     add('Vest / trui voor in de cabine', 'Transport', nPpl);
     if (hasBaby || hasToddler) add('Fles of speen voor opstijgen en landen (oren)', 'Transport');
+    if (hasBaby) {
+      add('Babyvoeding / melk mag >100ml door security (apart tonen)', 'Transport');
+      add('Extra rompertje + luiers in handbagage', 'Transport');
+      add('Fysiologische neusdruppels (drukverschil)', 'Reisapotheek');
+      add('Bassinet / wieg aan boord reserveren', 'Voor vertrek');
+      add('Kinderwagen: tot gate meenemen of inchecken? checken', 'Voor vertrek');
+    }
     if (hasChild) add('Kauwgom / snoepje voor opstijgen en landen', 'Transport');
     if (accommodation === 'camping') add('Tent/uitrusting ter plekke huren of opsturen', 'Voor vertrek');
     if (doesAct('cycling')) add('Fietsen ter plekke reserveren', 'Voor vertrek');
@@ -449,6 +508,8 @@ function generateItems({
   if (transport === 'car') {
     add('Snacks en drinken voor onderweg', 'Transport');
     add('Veiligheidshesje en gevarendriehoek', 'Transport');
+    add('Verbanddoos (verplicht in Duitsland en Oostenrijk)', 'Transport');
+    add('Reservelampenset', 'Transport');
     if (hasYoungKids) add('Kinderzitje / autostoel', 'Transport');
     if (accommodation === 'camping' || accommodation === 'house') add('Koelbox + koelelementen', 'Transport');
     if (accommodation === 'camping') {
@@ -493,7 +554,13 @@ function generateItems({
   if (!land && !home) add('Reisdocument- en visumeisen voor je bestemming checken', 'Voor vertrek');
   if (transport === 'car' && !home) {
     add('Vignet / tolregels voor de route checken', 'Voor vertrek');
+    add("Milieuvignet checken (Crit'Air Frankrijk / Umweltplakette Duitse steden)", 'Voor vertrek');
     add('Pechhulp / ANWB-dekking in het buitenland checken', 'Voor vertrek');
+    add('Auto-check: bandenspanning, olie, koelvloeistof', 'Voor vertrek');
+  }
+  if (transport === 'plane') add('Ruimbagage wegen (max. gewicht checken)', 'Voor vertrek');
+  if (!home && land && !land.ehic) {
+    add('Werelddekking pinpas aanzetten (geo-blokkering)', 'Voor vertrek');
   }
   if (meds.length && !home) {
     add('Medicijnverklaring checken (voor sommige medicijnen verplicht)', 'Voor vertrek');
