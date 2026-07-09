@@ -1511,7 +1511,7 @@ async function renderOmgeving(id) {
         return;
       }
       for (const p of visible) {
-        const mapsQuery = encodeURIComponent([p.name, c.destination].filter(Boolean).join(' '));
+        const mapsQuery = encodeURIComponent([p.name, c.destination].filter(Boolean).join(', '));
         const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`;
         poiListEl.append(el('li', {},
           el('span', { class: 'poi-name' },
