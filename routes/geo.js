@@ -103,6 +103,13 @@ async function overpassFetch(query) {
 
 // ---- helpers ----
 
+// Bounding box van ±km rond een punt, als Overpass-bbox-string.
+function bboxFor(lat, lng, km) {
+  const dLat = km / 111;
+  const dLng = km / (111 * Math.max(0.2, Math.cos(lat * Math.PI / 180)));
+  return `${(lat - dLat).toFixed(4)},${(lng - dLng).toFixed(4)},${(lat + dLat).toFixed(4)},${(lng + dLng).toFixed(4)}`;
+}
+
 function haversineKm(lat1, lng1, lat2, lng2) {
   const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -216,9 +223,7 @@ function buildOverpassQuery(lat, lng) {
   // tag-zoekopdracht blijft binnen het 35km-gebied in plaats van tegen
   // wereldwijde indexen aan te lopen. Zonder bbox viel de eerste
   // categorie op drukke servers al om ('Query timed out at line 3').
-  const dLat = 35 / 111;
-  const dLng = 35 / (111 * Math.max(0.2, Math.cos(lat * Math.PI / 180)));
-  const bbox = `${(lat - dLat).toFixed(4)},${(lng - dLng).toFixed(4)},${(lat + dLat).toFixed(4)},${(lng + dLng).toFixed(4)}`;
+  const bbox = bboxFor(lat, lng, 35);
 
   // Elk blok krijgt zijn eigen 'out' met cap. De landsgrens-detectie
   // gebruikt bewust grens-wégen + rel(bw): een 'around' op complete
@@ -664,8 +669,10 @@ router.get('/debug', async (req, res) => {
 
   try {
     const safe = q.replace(/[^\p{L}\p{N} \-']/gu, '');
-    const data = await overpassFetch(`[out:json][timeout:15];
-nwr["name"~"${safe}",i](around:40000,${c.lat},${c.lng});
+    // bbox is essentieel: een naam-regex kan geen index gebruiken, dus
+    // zonder gebiedsbegrenzing scant Overpass de hele planeet (timeout).
+    const data = await overpassFetch(`[out:json][timeout:15][bbox:${bboxFor(c.lat, c.lng, 40)}];
+nwr["name"~"${safe}",i];
 out center tags 25;`);
 
     const results = (data.elements || []).map(el => {
