@@ -72,24 +72,4 @@ function getCountry(code) {
   return byCode.get(String(code || '').toLowerCase()) || null;
 }
 
-// Match vrije tekst (oude data) op een landnaam.
-function guessCountry(text) {
-  const t = String(text || '').trim().toLowerCase();
-  if (!t) return null;
-  for (const c of COUNTRIES) {
-    if (c.code === 'other') continue;
-    if (t === c.name.toLowerCase() || t === c.code) return c;
-  }
-  // Veelvoorkomende alternatieve schrijfwijzen.
-  const alias = {
-    holland: 'nl', belgie: 'be', germany: 'de', france: 'fr', spain: 'es',
-    italie: 'it', italy: 'it', oostenryk: 'at', austria: 'at', greece: 'gr',
-    kroatie: 'hr', croatia: 'hr', turkey: 'tr', engeland: 'gb', 'groot-brittannië': 'gb',
-    uk: 'gb', usa: 'us', amerika: 'us', vs: 'us', tsjechie: 'cz', hongarije: 'hu',
-    zwitserland: 'ch', slovenie: 'si', romenie: 'ro', roemenie: 'ro',
-  };
-  if (alias[t]) return byCode.get(alias[t]);
-  return null;
-}
-
-module.exports = { COUNTRIES, getCountry, guessCountry };
+module.exports = { COUNTRIES, getCountry };

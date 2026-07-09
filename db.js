@@ -120,53 +120,9 @@ async function init() {
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS border_countries JSONB NOT NULL DEFAULT '[]';
   `);
-  await convertLegacyData();
 
   // Ruim heel oude geo-cache op (best effort).
   await pool.query("DELETE FROM geo_cache WHERE fetched_at < NOW() - interval '90 days'").catch(() => {});
 }
 
-// Zet data uit oudere versies om naar de huidige velden. Idempotent en
-// apart aanroepbaar omdat migrate.js data uit een oude database kan
-// invoegen nádat init() al gedraaid heeft.
-async function convertLegacyData() {
-  // '× N' in de item-tekst → quantity-veld.
-  await pool.query(`
-    UPDATE items SET
-      quantity = (regexp_match(text, '×\\s*(\\d+)'))[1]::int,
-      text = trim(regexp_replace(text, '\\s*×\\s*\\d+', ''))
-    WHERE text ~ '×\\s*\\d+' AND quantity = 1
-  `);
-  await pool.query('UPDATE items SET packed = quantity WHERE is_checked AND packed = 0');
-
-  // '(reiziger N)' of '(Naam)' achteraan de tekst → traveler-veld.
-  await pool.query(`
-    UPDATE items SET traveler = initcap((regexp_match(text, '\\((reiziger \\d+)\\)\\s*$'))[1])
-    WHERE traveler IS NULL AND text ~ '\\(reiziger \\d+\\)\\s*$'
-  `);
-  const { rows: cls } = await pool.query('SELECT id, travelers FROM checklists');
-  for (const cl of cls) {
-    const names = (Array.isArray(cl.travelers) ? cl.travelers : [])
-      .map(t => t && t.name && String(t.name).trim())
-      .filter(Boolean);
-    for (const name of names) {
-      await pool.query(
-        `UPDATE items SET traveler = $1
-          WHERE checklist_id = $2 AND traveler IS NULL AND text LIKE '%(' || $1 || ')'`,
-        [name, cl.id]
-      );
-    }
-  }
-
-  // Vrije-tekst bestemming → landcode (best effort, alleen waar leeg).
-  const { guessCountry } = require('./countries');
-  const { rows: noCountry } = await pool.query(
-    "SELECT id, destination FROM checklists WHERE country IS NULL AND destination IS NOT NULL AND destination <> ''"
-  );
-  for (const cl of noCountry) {
-    const c = guessCountry(cl.destination);
-    if (c) await pool.query('UPDATE checklists SET country = $1 WHERE id = $2', [c.code, cl.id]);
-  }
-}
-
-module.exports = { pool, init, poolConfig, convertLegacyData };
+module.exports = { pool, init };

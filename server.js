@@ -60,13 +60,7 @@ process.on('uncaughtException', (err) => {
 
 const port = process.env.PORT || 3000;
 
-const { migrate } = require('./migrate');
-
 init()
-  .then(() => migrate().catch(err => {
-    // Non-fatal: app moet kunnen starten ook als de oude DB onbereikbaar is.
-    console.error('[migrate] Migratie mislukt (app start gewoon door):', err.message);
-  }))
   .then(() => {
     app.listen(port, () => {
       console.log(`Vakantiechecklist draait op http://localhost:${port}`);

@@ -113,7 +113,6 @@ function generateItems({
 
   const nPpl = Math.max(1, travelers.length);
   const nAdults = Math.max(1, travelers.filter(isAdult).length);
-  const nTeensPlus = Math.max(1, travelers.filter(t => age(t) >= 13).length);
   const nFivePlus = Math.max(1, travelers.filter(t => age(t) >= 5).length);
   const nBabies = travelers.filter(isBaby).length;
   const nDiaperKids = travelers.filter(t => age(t) < 3).length; // luierleeftijd
@@ -645,4 +644,4 @@ function generateItems({
   return dedup.map((it, i) => ({ ...it, position: i }));
 }
 
-module.exports = { generateItems, defaultQuantities, resolveAge };
+module.exports = { generateItems };

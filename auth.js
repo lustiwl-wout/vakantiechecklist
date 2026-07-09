@@ -43,7 +43,6 @@ async function verifyPassword(plain, hash) {
 }
 
 module.exports = {
-  COOKIE_NAME,
   setAuthCookie,
   clearAuthCookie,
   requireAuth,

@@ -1,7 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const { requireAuth } = require('../auth');
-const { generateItems, defaultQuantities } = require('../templates');
+const { generateItems } = require('../templates');
 const { getCountry } = require('../countries');
 const { prefetchNearby } = require('./geo');
 
@@ -469,16 +469,5 @@ router.post('/:id/duplicate', async (req, res) => {
   }
 });
 
-router.get('/_meta/defaults', (req, res) => {
-  const start = req.query.start;
-  const end = req.query.end;
-  const a = start ? new Date(start) : null;
-  const b = end ? new Date(end) : null;
-  let days = 7;
-  if (a && b && !isNaN(a) && !isNaN(b)) {
-    days = Math.max(1, Math.round((b - a) / 86400000) + 1);
-  }
-  res.json({ days, quantities: defaultQuantities(days) });
-});
 
 module.exports = router;
