@@ -77,28 +77,36 @@ function matchCountryCode(nominatimCode) {
 
 // Overpass-categorieën → NL-labels + leeftijdsadvies + activiteit-koppeling.
 // De 'activity' verwijst naar de activiteiten van de checklist zodat
-// 'Zet op mijn programma' de paklijst kan bijwerken.
+// 'Zet op mijn programma' de paklijst kan bijwerken. Elke categorie heeft
+// een eigen zoekstraal en resultaat-cap, zodat dichte categorieën
+// (restaurants!) de rest niet verdringen.
 const POI_CATEGORIES = [
-  { key: 'themepark', selector: '["tourism"="theme_park"]', label: 'Pretparken', ages: 'kinderen en tieners', activity: 'themepark' },
-  { key: 'zoo', selector: '["tourism"="zoo"]', label: 'Dierentuinen', ages: 'alle leeftijden', activity: 'daytrip' },
-  { key: 'aquarium', selector: '["tourism"="aquarium"]', label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip' },
-  { key: 'waterpark', selector: '["leisure"="water_park"]', label: 'Waterparken / zwemparadijzen', ages: 'kinderen en tieners', activity: 'pool' },
-  { key: 'museum', selector: '["tourism"="museum"]', label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural' },
-  { key: 'beach', selector: '["natural"="beach"]["name"]', label: 'Stranden', ages: 'alle leeftijden', activity: 'beach' },
+  { key: 'themepark', selectors: ['["tourism"="theme_park"]'], radiusKm: 35, cap: 40, label: 'Pretparken', ages: 'kinderen en tieners', activity: 'themepark' },
+  { key: 'zoo', selectors: ['["tourism"="zoo"]'], radiusKm: 35, cap: 40, label: 'Dierentuinen', ages: 'alle leeftijden', activity: 'daytrip' },
+  { key: 'aquarium', selectors: ['["tourism"="aquarium"]'], radiusKm: 35, cap: 20, label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip' },
+  { key: 'waterpark', selectors: ['["leisure"="water_park"]'], radiusKm: 35, cap: 20, label: 'Waterparken / zwemparadijzen', ages: 'kinderen en tieners', activity: 'pool' },
+  { key: 'nature', selectors: ['["boundary"="national_park"]', '["leisure"="nature_reserve"]'], radiusKm: 35, cap: 40, label: 'Natuur & wandelgebieden', ages: 'alle leeftijden', activity: 'hiking' },
+  { key: 'museum', selectors: ['["tourism"="museum"]'], radiusKm: 25, cap: 40, label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural' },
+  { key: 'attraction', selectors: ['["tourism"="attraction"]'], radiusKm: 20, cap: 40, label: 'Bezienswaardigheden & uitjes', ages: 'alle leeftijden', activity: 'daytrip' },
+  { key: 'beach', selectors: ['["natural"="beach"]'], radiusKm: 25, cap: 20, label: 'Stranden', ages: 'alle leeftijden', activity: 'beach' },
+  { key: 'restaurant', selectors: ['["amenity"="restaurant"]'], radiusKm: 8, cap: 30, label: 'Restaurants', ages: 'alle leeftijden', activity: 'nightlife' },
 ];
 
-function buildOverpassQuery(lat, lng, radiusM) {
-  const parts = POI_CATEGORIES.map(c =>
-    `nwr${c.selector}["name"](around:${radiusM},${lat},${lng});`
-  ).join('\n');
-  return `[out:json][timeout:20];
-(
-${parts}
-);
-out center 120;
-(
-relation["boundary"="administrative"]["admin_level"="2"](around:30000,${lat},${lng});
-);
+function buildOverpassQuery(lat, lng) {
+  // Elk blok krijgt zijn eigen 'out' met cap. De landsgrens-detectie
+  // gebruikt bewust grens-wégen + rel(bw): een 'around' op complete
+  // landsrelaties is zó zwaar dat Overpass de query afkapt en (met een
+  // remark) níets teruggeeft — de oorzaak van eerdere lege resultaten.
+  const blocks = POI_CATEGORIES.map(c => {
+    const sel = c.selectors
+      .map(s => `nwr${s}["name"](around:${c.radiusKm * 1000},${lat},${lng});`)
+      .join('\n  ');
+    return `(\n  ${sel}\n);\nout center ${c.cap};`;
+  }).join('\n');
+  return `[out:json][timeout:25];
+${blocks}
+way["boundary"="administrative"]["admin_level"="2"](around:30000,${lat},${lng});
+rel(bw)["boundary"="administrative"]["admin_level"="2"];
 out tags 10;`;
 }
 
@@ -108,8 +116,13 @@ function classify(el) {
   if (t.tourism === 'zoo') return 'zoo';
   if (t.tourism === 'aquarium') return 'aquarium';
   if (t.leisure === 'water_park') return 'waterpark';
+  if (t.boundary === 'national_park' || t.leisure === 'nature_reserve') return 'nature';
   if (t.tourism === 'museum') return 'museum';
   if (t.natural === 'beach') return 'beach';
+  if (t.amenity === 'restaurant') return 'restaurant';
+  // 'attraction' als laatste: veel POI's hebben tourism=attraction als
+  // extra tag naast een specifiekere.
+  if (t.tourism === 'attraction') return 'attraction';
   return null;
 }
 
@@ -169,17 +182,27 @@ router.get('/reverse', async (req, res) => {
 router.get('/nearby', async (req, res) => {
   const c = parseCoords(req);
   if (!c) return res.status(400).json({ error: 'Ongeldige coördinaten' });
-  const radiusKm = 35;
-  const key = `nearby:${c.lat.toFixed(2)}:${c.lng.toFixed(2)}`;
+  const key = `nearby:v2:${c.lat.toFixed(2)}:${c.lng.toFixed(2)}`;
   const cached = cacheGet(key, 24 * 3600 * 1000);
   if (cached) return res.json(cached);
 
   try {
-    const data = await overpassFetch(buildOverpassQuery(c.lat, c.lng, radiusKm * 1000));
+    const data = await overpassFetch(buildOverpassQuery(c.lat, c.lng));
+
+    // Overpass geeft bij een timeout vaak HTTP 200 met een 'remark' en
+    // (vrijwel) lege elements terug. Dat is een fout, geen 'niets in de
+    // buurt' — anders tonen we ten onrechte een lege adviespagina.
+    const elements = data.elements || [];
+    if (data.remark && elements.length === 0) {
+      throw new Error(`Overpass remark: ${data.remark}`);
+    }
+    if (data.remark) console.warn('[geo/nearby] Overpass remark (deels resultaat):', data.remark);
+
+    const radiusByCat = Object.fromEntries(POI_CATEGORIES.map(x => [x.key, x.radiusKm]));
     const groups = {};
     const countriesNearby = new Set();
 
-    for (const el of data.elements || []) {
+    for (const el of elements) {
       const tags = el.tags || {};
       if (tags.boundary === 'administrative' && tags.admin_level === '2') {
         const iso = String(tags['ISO3166-1'] || '').toLowerCase();
@@ -192,7 +215,7 @@ router.get('/nearby', async (req, res) => {
       const plng = el.lon ?? (el.center && el.center.lon);
       if (plat == null) continue;
       const dist = haversineKm(c.lat, c.lng, plat, plng);
-      if (dist > radiusKm) continue;
+      if (dist > (radiusByCat[cat] || 35)) continue;
       (groups[cat] = groups[cat] || []).push({
         name: tags.name,
         distanceKm: Math.round(dist * 10) / 10,
