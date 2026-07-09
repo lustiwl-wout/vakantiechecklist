@@ -249,6 +249,8 @@ function classify(el) {
 // een Wikipedia-artikel, website en openingstijden; een obscuur
 // hertenkampje of bosperceel heeft alleen een naam. Zonder externe
 // beoordelingen is dit de beste maat voor 'is dit een échte uitje'.
+// Historic/heritage telt bewust níet mee: een monumentje met een
+// Wikipedia-artikel is nog geen dagje uit.
 function notabilityScore(tags) {
   let s = 0;
   if (tags.wikipedia || tags.wikidata) s += 4;
@@ -256,7 +258,6 @@ function notabilityScore(tags) {
   if (tags.opening_hours) s += 1;
   if (tags.phone || tags['contact:phone']) s += 1;
   if (tags.operator || tags.brand) s += 1;
-  if (tags.heritage || tags['heritage:operator'] || tags.historic) s += 1;
   return s;
 }
 
@@ -268,11 +269,38 @@ const MIN_SCORE = {
   nature: 0, beach: 0,
 };
 
+// Accommodaties zijn geen uitjes, maar duiken wel op in de resultaten:
+// een groepsaccommodatie met recreatieplas draagt soms óók een
+// water_park- of attraction-tag, en de naam verraadt vaak de rest.
+const LODGING_TOURISM_TAGS = new Set([
+  'hotel', 'guest_house', 'hostel', 'motel', 'apartment',
+  'chalet', 'camp_site', 'caravan_site', 'alpine_hut',
+]);
+const LODGING_NAME_RE = /groepsaccommodatie|groepsverblijf|vakantiehuis|vakantiewoning|bungalowpark|bed\s*&\s*breakfast|\bb\s?&\s?b\b|\bcamping\b|\bhostel\b|\bpension\b|\bhotel\b/i;
+
+function isLodging(cat, tags) {
+  if (LODGING_TOURISM_TAGS.has(String(tags.tourism || ''))) return true;
+  if (tags.building === 'hotel' || tags.leisure === 'summer_camp') return true;
+  // Naam-check niet voor restaurants: "Restaurant Hotel De Wereld" is
+  // gewoon een restaurant.
+  if (cat !== 'restaurant' && LODGING_NAME_RE.test(String(tags.name || ''))) return true;
+  return false;
+}
+
 function isValidNearbyPoi(cat, tags) {
   if (!cat || !tags.name) return false;
-  if (cat === 'attraction'
-      && (tags.artwork_type || tags.memorial || tags['memorial:type'] || tags.tourism === 'artwork')) {
-    return false;
+  if (isLodging(cat, tags)) return false;
+  if (cat === 'attraction') {
+    // Monumenten, kunstwerken en uitzichtpunten zijn geen dagje uit.
+    if (tags.artwork_type || tags.memorial || tags['memorial:type']
+        || tags.tourism === 'artwork' || tags.historic) {
+      return false;
+    }
+    // Een écht bezoekbare attractie heeft een website of openingstijden;
+    // een Wikipedia-artikel alleen (Poepenhemeltje!) is onvoldoende.
+    if (!(tags.website || tags['contact:website'] || tags.opening_hours)) {
+      return false;
+    }
   }
   // Natuur: elk bosperceel staat in OSM als nature_reserve. Alleen echte
   // wandelbestemmingen: nationale parken, of gebieden met een
@@ -348,8 +376,28 @@ router.get('/reverse', async (req, res) => {
   }
 });
 
+// Hetzelfde park staat in OSM vaak dubbel (als punt én als gebied), elk
+// met andere metadata: de één heeft de Wikipedia-verwijzing, de ander de
+// website. Samensmelten in plaats van weggooien, anders raken we velden
+// kwijt (Wildlands verloor zo zijn website).
+function mergeByName(pois) {
+  const byName = new Map();
+  for (const p of pois) {
+    const k = p.name.toLowerCase();
+    const cur = byName.get(k);
+    if (!cur) {
+      byName.set(k, { ...p });
+    } else {
+      cur.website = cur.website || p.website;
+      cur.score = Math.max(cur.score, p.score);
+      cur.distanceKm = Math.min(cur.distanceKm, p.distanceKm);
+    }
+  }
+  return [...byName.values()];
+}
+
 function nearbyKey(lat, lng) {
-  return `nearby:v5:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+  return `nearby:v6:${lat.toFixed(2)}:${lng.toFixed(2)}`;
 }
 
 // Haalt omgevingsdata live op bij Overpass en schrijft hem in de cache.
@@ -400,10 +448,8 @@ async function fetchNearbyLive(lat, lng) {
       activity: cdef.activity,
       // Bekendste eerst; afstand als tiebreaker. Zo wint Wildlands (met
       // Wikipedia + website) van een naamloos hertenkampje om de hoek.
-      pois: groups[cdef.key]
+      pois: mergeByName(groups[cdef.key])
         .sort((a, b) => (b.score - a.score) || (a.distanceKm - b.distanceKm))
-        // Dedupliceer op naam (zelfde park kan als node én relation in OSM staan)
-        .filter((p, i, arr) => arr.findIndex(x => x.name === p.name) === i)
         .slice(0, 15),
     }));
 
