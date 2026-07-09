@@ -1459,24 +1459,58 @@ async function renderOmgeving(id) {
   const sorted = [...geo.categories].sort((a, b) =>
     Number(fitsTravelers(b.key, c.travelers)) - Number(fitsTravelers(a.key, c.travelers)));
 
+  // Bijgehouden overgeslagen locaties per checklist (blijft bewaard bij herladen).
+  const dismissKey = `poi_dismissed_${id}`;
+  const dismissed = new Set(JSON.parse(localStorage.getItem(dismissKey) || '[]'));
+
+  function saveDismissed() {
+    localStorage.setItem(dismissKey, JSON.stringify([...dismissed]));
+  }
+
   for (const cat of sorted) {
     const fit = fitsTravelers(cat.key, c.travelers);
     const already = currentActivities.has(cat.activity);
+
+    const poiListEl = el('ul', { class: 'poi-list' });
+
+    const renderPoiList = () => {
+      clear(poiListEl);
+      const visible = cat.pois.filter(p => !dismissed.has(p.name));
+      if (visible.length === 0) {
+        poiListEl.append(el('li', { class: 'poi-all-seen' },
+          '✓ Je hebt alle locaties in deze buurt bekeken.'));
+        return;
+      }
+      for (const p of visible) {
+        poiListEl.append(el('li', {},
+          el('span', { class: 'poi-name' },
+            p.website
+              ? el('a', { href: p.website, target: '_blank', rel: 'noopener' }, p.name)
+              : p.name),
+          el('span', { class: 'poi-dist' }, `${p.distanceKm} km`),
+          el('button', {
+            class: 'btn btn-sm btn-ghost poi-dismiss',
+            title: 'Overslaan — zoek een vervangende locatie',
+            'aria-label': `${p.name} overslaan`,
+            onclick: () => {
+              dismissed.add(p.name);
+              saveDismissed();
+              renderPoiList();
+            },
+          }, '×'),
+        ));
+      }
+    }
+
+    renderPoiList();
+
     const card = el('div', { class: 'card poi-card' },
       el('div', { class: 'poi-head' },
         el('h2', { style: 'margin: 0' }, cat.label),
         fit ? el('span', { class: 'badge-fit' }, 'aanrader voor jullie') : null,
       ),
       el('p', { class: 'muted', style: 'margin: 2px 0 10px' }, `Leuk voor: ${cat.ages}`),
-      el('ul', { class: 'poi-list' },
-        ...cat.pois.map(p => el('li', {},
-          el('span', { class: 'poi-name' },
-            p.website
-              ? el('a', { href: p.website, target: '_blank', rel: 'noopener' }, p.name)
-              : p.name),
-          el('span', { class: 'poi-dist' }, `${p.distanceKm} km`),
-        )),
-      ),
+      poiListEl,
       el('button', {
         class: 'btn btn-sm' + (already ? '' : ' btn-primary'),
         disabled: already,

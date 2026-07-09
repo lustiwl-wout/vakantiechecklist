@@ -410,14 +410,33 @@ textarea { min-height: 80px; resize: vertical; }
 }
 .poi-list li {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   padding: 6px 0;
   border-bottom: 1px solid var(--border);
   font-size: 15px;
 }
 .poi-list li:last-child { border-bottom: none; }
+.poi-name { flex: 1; min-width: 0; }
 .poi-dist { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.poi-dismiss {
+  min-height: 28px !important;
+  padding: 2px 8px !important;
+  font-size: 16px !important;
+  line-height: 1;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.poi-dismiss:hover { color: var(--danger) !important; background: var(--danger-soft) !important; }
+.poi-all-seen {
+  color: var(--muted);
+  font-size: 14px;
+  font-style: italic;
+  justify-content: center !important;
+  padding: 10px 0 !important;
+  border-bottom: none !important;
+}
 
 /* Inline checkbox in formulieren (bv. huurauto) */
 .checkbox-inline {

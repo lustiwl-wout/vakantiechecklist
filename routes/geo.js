@@ -239,7 +239,7 @@ router.get('/reverse', async (req, res) => {
 });
 
 function nearbyKey(lat, lng) {
-  return `nearby:v2:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+  return `nearby:v3:${lat.toFixed(2)}:${lng.toFixed(2)}`;
 }
 
 // Haalt omgevingsdata live op bij Overpass en schrijft hem in de cache.
@@ -291,7 +291,7 @@ async function fetchNearbyLive(lat, lng) {
         .sort((a, b) => a.distanceKm - b.distanceKm)
         // Dedupliceer op naam (zelfde park kan als node én relation in OSM staan)
         .filter((p, i, arr) => arr.findIndex(x => x.name === p.name) === i)
-        .slice(0, 6),
+        .slice(0, 15),
     }));
 
   // Buurlanden: alle admin-grenzen binnen 30 km behalve het land zelf.
