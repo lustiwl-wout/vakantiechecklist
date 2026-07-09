@@ -229,12 +229,15 @@ function buildOverpassQuery(lat, lng) {
   // gebruikt bewust grens-wégen + rel(bw): een 'around' op complete
   // landsrelaties is zó zwaar dat Overpass de query afkapt en (met een
   // remark) níets teruggeeft — de oorzaak van eerdere lege resultaten.
-  const blocks = POI_CATEGORIES.map(c => {
-    const sel = c.selectors
-      .map(s => `nwr${s}["name"](around:${c.radiusKm * 1000},${lat},${lng});`)
-      .join('\n  ');
-    return `(\n  ${sel}\n);\nout center ${c.cap};`;
-  }).join('\n');
+  // Eén blok per SELECTOR (niet per categorie): anders vult een ruizige
+  // tag (swimming_pool: elk benoemd bassin) de categorie-limiet voordat
+  // de andere tag-soorten aan de beurt zijn, en valt bv. een bosbad
+  // verderop achter de afkap.
+  const blocks = POI_CATEGORIES.flatMap(c =>
+    c.selectors.map(s =>
+      `(\n  nwr${s}["name"](around:${c.radiusKm * 1000},${lat},${lng});\n);\nout center ${c.cap};`
+    )
+  ).join('\n');
   return `[out:json][timeout:25][bbox:${bbox}];
 ${blocks}
 way["boundary"="administrative"]["admin_level"="2"](around:30000,${lat},${lng});
@@ -482,7 +485,7 @@ router.get('/reverse', async (req, res) => {
 // dán mist de gecachte ruwe data elementsoorten en is een verse fetch
 // nodig. Filter-/score-wijzigingen vereisen GEEN nieuwe fetch: die
 // draaien bij het lezen over de gecachte ruwe data.
-const QUERY_VERSION = 2;
+const QUERY_VERSION = 3;
 
 function nearbyKey(lat, lng) {
   return `nearby:raw:${lat.toFixed(2)}:${lng.toFixed(2)}`;
