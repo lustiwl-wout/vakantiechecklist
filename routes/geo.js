@@ -275,6 +275,11 @@ function liteTags(tags) {
       || tags.building === 'hotel' || tags.leisure === 'summer_camp' || tags.leisure === 'resort',
     nationalPark: tags.boundary === 'national_park',
     pettingZoo: tags.zoo === 'petting_zoo',
+    // De specifieke water_park-tag is zelf al een sterk signaal (wordt
+    // zelden misbruikt); de score-drempel geldt alleen voor de ruizige
+    // swimming_pool-/sports_centre-varianten. Zo blijft Aqua Mundo
+    // (kaal object zonder eigen website) zichtbaar.
+    waterParkTag: tags.leisure === 'water_park',
   };
 }
 
@@ -291,6 +296,7 @@ function mergeLite(a, b) {
     lodgingTag: a.lodgingTag || b.lodgingTag,
     nationalPark: a.nationalPark || b.nationalPark,
     pettingZoo: a.pettingZoo || b.pettingZoo,
+    waterParkTag: a.waterParkTag || b.waterParkTag,
   };
 }
 
@@ -386,8 +392,13 @@ function isValidNearbyPoi(cat, name, t) {
     return t.nationalPark || t.wikipedia || Boolean(t.website);
   }
   // Kinderboerderijen hebben zelden meer metadata dan openingstijden,
-  // maar zijn geliefde gratis gezinsuitjes — lagere drempel.
-  const min = (cat === 'zoo' && t.pettingZoo) ? 1 : (MIN_SCORE[cat] ?? 0);
+  // maar zijn geliefde gratis gezinsuitjes — lagere drempel. Voor echte
+  // water_park-objecten geldt de tag zelf als bewijs (Aqua Mundo heeft
+  // geen eigen website in OSM); de drempel is er voor de ruizige
+  // swimming_pool-varianten.
+  let min = MIN_SCORE[cat] ?? 0;
+  if (cat === 'zoo' && t.pettingZoo) min = 1;
+  if (cat === 'waterpark' && t.waterParkTag) min = 0;
   return notabilityScore(cat, t) >= min;
 }
 
@@ -457,7 +468,7 @@ router.get('/reverse', async (req, res) => {
 });
 
 function nearbyKey(lat, lng) {
-  return `nearby:v9:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+  return `nearby:v10:${lat.toFixed(2)}:${lng.toFixed(2)}`;
 }
 
 // Haalt omgevingsdata live op bij Overpass en schrijft hem in de cache.
