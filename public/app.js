@@ -1241,35 +1241,23 @@ async function renderChecklist(id, epoch) {
       el('div', { class: 'head-actions no-print' },
         (() => {
           if (c.lat == null || c.lng == null) return null;
-          const omgevingBtn = el('a', {
-            href: `#/list/${c.id}/omgeving`,
-            class: 'btn btn-sm',
-            disabled: true,
-            'aria-disabled': 'true',
-            title: 'Omgevingsgegevens worden geladen…',
-            style: 'opacity: 0.5; pointer-events: none;',
-          }, '🗺 Omgeving');
-          function activateOmgevingBtn() {
-            omgevingBtn.removeAttribute('disabled');
-            omgevingBtn.removeAttribute('aria-disabled');
-            omgevingBtn.removeAttribute('title');
-            omgevingBtn.style.opacity = '';
-            omgevingBtn.style.pointerEvents = '';
-          }
+          // De knop is altijd direct bruikbaar: de Omgeving-pagina vangt
+          // een koude cache zelf netjes op (laadtekst, database-cache,
+          // verouderde-data-fallback). Een uitgeschakelde knop die op een
+          // ready-rondje moet wachten oogt bij een koude Render-start
+          // onterecht 30-60 s kapot terwijl de cache er gewoon is.
+          // We stoken de cache wel alvast warm op de achtergrond.
           api(`/api/geo/nearby/ready?lat=${c.lat}&lng=${c.lng}`)
             .then(r => {
-              if (r.ready) {
-                activateOmgevingBtn();
-              } else {
-                // Data nog niet in cache: haal het op op de achtergrond en
-                // activeer de knop zodra het klaar is.
-                api(`/api/geo/nearby?lat=${c.lat}&lng=${c.lng}`)
-                  .then(() => activateOmgevingBtn())
-                  .catch(() => activateOmgevingBtn()); // bij fout toch beschikbaar maken
+              if (!r.ready) {
+                api(`/api/geo/nearby?lat=${c.lat}&lng=${c.lng}`).catch(() => {});
               }
             })
-            .catch(() => activateOmgevingBtn()); // bij netwerk-/serverfout niet permanent blokkeren
-          return omgevingBtn;
+            .catch(() => {});
+          return el('a', {
+            href: `#/list/${c.id}/omgeving`,
+            class: 'btn btn-sm',
+          }, '🗺 Omgeving');
         })(),
         el('a', { href: `#/list/${c.id}/edit`, class: 'btn btn-sm' }, 'Aanpassen'),
         el('button', {
