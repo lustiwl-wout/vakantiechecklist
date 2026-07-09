@@ -1524,7 +1524,7 @@ async function renderOmgeving(id) {
             href: mapsUrl,
             target: '_blank',
             rel: 'noopener',
-            title: `Open ${p.name} in Google Maps`,
+            title: `${p.name} openen in Google Maps`,
             'aria-label': `${p.name} openen in Google Maps`,
           }, 'Navigatie'),
           el('button', {
