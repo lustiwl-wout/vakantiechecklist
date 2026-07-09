@@ -683,7 +683,9 @@ router.get('/debug', async (req, res) => {
       // class/type is de hoofd-tag, extratags bevat de rest.
       const name = r.name || String(r.display_name || '').split(',')[0];
       const tags = { name, ...(r.extratags || {}) };
-      if (r.class && r.type) tags[r.class] = r.type;
+      // jsonv2 noemt het veld 'category'; oudere formaten 'class'.
+      const mainKey = r.category || r.class;
+      if (mainKey && r.type) tags[mainKey] = r.type;
       const cat = classify({ tags });
       const t = liteTags(tags);
       return {
