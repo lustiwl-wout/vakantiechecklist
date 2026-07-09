@@ -104,7 +104,7 @@ async function migrate() {
       let items;
       try {
         ({ rows: items } = await src.query(
-          `SELECT id, checklist_id, text, category, is_checked, position, created_at, quantity, packed
+          `SELECT id, checklist_id, text, category, is_checked, position, created_at, quantity, packed, traveler
              FROM items ORDER BY id`
         ));
       } catch {
@@ -115,10 +115,10 @@ async function migrate() {
       }
       for (const it of items) {
         await client.query(
-          `INSERT INTO items (id, checklist_id, text, category, is_checked, position, created_at, quantity, packed)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          `INSERT INTO items (id, checklist_id, text, category, is_checked, position, created_at, quantity, packed, traveler)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
           [it.id, it.checklist_id, it.text, it.category, it.is_checked, it.position, it.created_at,
-           it.quantity ?? 1, it.packed ?? 0]
+           it.quantity ?? 1, it.packed ?? 0, it.traveler ?? null]
         );
       }
 
@@ -129,9 +129,10 @@ async function migrate() {
 
       await client.query('COMMIT');
 
-      // Zet eventuele '× N'-teksten uit de oude database om naar quantity.
-      const { convertLegacyQuantities } = require('./db');
-      await convertLegacyQuantities();
+      // Zet '× N'-teksten en '(Naam)'-labels uit de oude database om
+      // naar de quantity- en traveler-velden.
+      const { convertLegacyData } = require('./db');
+      await convertLegacyData();
 
       console.log(`[migrate] Klaar: ${users.length} users, ${cls.length} checklists, ${items.length} items gekopieerd.`);
     } catch (err) {

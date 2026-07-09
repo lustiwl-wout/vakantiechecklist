@@ -502,11 +502,66 @@ async function renderEdit(id) {
       activities: c.activities,
     },
     onSubmit: async (formData) => {
-      await api(`/api/checklists/${id}`, { method: 'PATCH', body: formData });
-      toast('Wijzigingen opgeslagen');
-      navigate(`#/list/${id}`);
+      const res = await api(`/api/checklists/${id}`, { method: 'PATCH', body: formData });
+      if (res.suggestions && res.suggestions.length) {
+        renderSuggestions(id, res.suggestions);
+      } else {
+        toast('Wijzigingen opgeslagen');
+        navigate(`#/list/${id}`);
+      }
     },
   }));
+}
+
+// Na het bewerken van reisgegevens: laat de gebruiker kiezen welke nieuwe
+// suggesties van de generator aan de lijst worden toegevoegd.
+function renderSuggestions(id, suggestions) {
+  clear(app);
+
+  const boxes = [];
+  const groups = {};
+  for (const s of suggestions) {
+    (groups[s.category || 'Overig'] = groups[s.category || 'Overig'] || []).push(s);
+  }
+
+  const listWrap = el('div', {});
+  for (const [cat, list] of Object.entries(groups)) {
+    const ul = el('ul', { class: 'item-list' });
+    for (const s of list) {
+      const cb = el('input', { type: 'checkbox', checked: true });
+      boxes.push({ cb, item: s });
+      const label = s.quantity > 1 ? `${s.text} (× ${s.quantity})` : s.text;
+      ul.append(el('li', { class: 'item' },
+        cb,
+        el('span', { class: 'text', onclick: () => { cb.checked = !cb.checked; } }, label),
+      ));
+    }
+    listWrap.append(el('div', { class: 'category-group' }, el('h2', {}, cat), ul));
+  }
+
+  const addBtn = el('button', { class: 'btn btn-primary' }, 'Geselecteerde items toevoegen');
+  addBtn.addEventListener('click', async () => {
+    const chosen = boxes.filter(b => b.cb.checked).map(b => b.item);
+    try {
+      if (chosen.length) {
+        await api(`/api/checklists/${id}/items/bulk`, { method: 'POST', body: { items: chosen } });
+        toast(`${chosen.length} item${chosen.length === 1 ? '' : 's'} toegevoegd`);
+      }
+      navigate(`#/list/${id}`);
+    } catch (err) { toast(err.message); }
+  });
+
+  app.append(
+    el('h1', {}, 'Nieuwe suggesties'),
+    el('p', { class: 'muted' },
+      'Op basis van je gewijzigde reisgegevens stellen we deze items voor. ',
+      'Vink uit wat je niet wilt — bestaande items op je lijst blijven ongewijzigd.'),
+    listWrap,
+    el('div', { class: 'actions' },
+      el('a', { href: `#/list/${id}`, class: 'btn' }, 'Overslaan'),
+      addBtn,
+    ),
+  );
 }
 
 // ---------- checklist view ----------
@@ -530,6 +585,44 @@ async function renderChecklist(id) {
 
   const c = data.checklist;
   let items = data.items;
+
+  // Filter op reiziger: null = alles, '__shared__' = gedeelde items, anders de naam.
+  let activeTraveler = null;
+
+  function travelerTabs() {
+    const inItems = [...new Set(items.map(i => i.traveler).filter(Boolean))];
+    if (!inItems.length) return null;
+    // Volgorde van het reizigers-formulier aanhouden.
+    const order = (Array.isArray(c.travelers) ? c.travelers : [])
+      .map((t, i) => (t.name && t.name.trim()) || `Reiziger ${i + 1}`);
+    inItems.sort((a, b) => {
+      const ia = order.indexOf(a); const ib = order.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+    const chips = el('div', { class: 'chips no-print' });
+    const mk = (label, value) => {
+      const btn = el('button', {
+        class: 'chip' + (activeTraveler === value ? ' active' : ''),
+        onclick: () => {
+          activeTraveler = value;
+          chips.querySelectorAll('.chip').forEach(x => x.classList.remove('active'));
+          btn.classList.add('active');
+          paintItems();
+        },
+      }, label);
+      return btn;
+    };
+    chips.append(mk('Alles', null));
+    for (const name of inItems) chips.append(mk(name, name));
+    chips.append(mk('Gedeeld', '__shared__'));
+    return chips;
+  }
+
+  function visibleItems() {
+    if (activeTraveler === null) return items;
+    if (activeTraveler === '__shared__') return items.filter(i => !i.traveler);
+    return items.filter(i => i.traveler === activeTraveler);
+  }
 
   const progressBar = el('span', {});
   const progressLabel = el('span', {});
@@ -558,7 +651,7 @@ async function renderChecklist(id) {
   function updateCatCount(cat) {
     const span = catCountSpans.get(cat);
     if (!span) return;
-    const inCat = items.filter(i => (i.category || 'Overig') === cat);
+    const inCat = visibleItems().filter(i => (i.category || 'Overig') === cat);
     const done = inCat.filter(i => i.is_checked).length;
     span.textContent = `${done}/${inCat.length}`;
     span.classList.toggle('complete', inCat.length > 0 && done === inCat.length);
@@ -567,12 +660,14 @@ async function renderChecklist(id) {
   function paintItems() {
     clear(itemsContainer);
     catCountSpans.clear();
-    if (!items.length) {
-      itemsContainer.append(el('div', { class: 'empty' }, 'Nog geen items op deze lijst.'));
+    const visible = visibleItems();
+    if (!visible.length) {
+      itemsContainer.append(el('div', { class: 'empty' },
+        items.length ? 'Geen items binnen dit filter.' : 'Nog geen items op deze lijst.'));
       return;
     }
     const groups = {};
-    for (const it of items) {
+    for (const it of visible) {
       const cat = it.category || 'Overig';
       (groups[cat] = groups[cat] || []).push(it);
     }
@@ -731,6 +826,9 @@ async function renderChecklist(id) {
 
   function initSortable() {
     if (typeof Sortable === 'undefined') return;
+    // Herordenen alleen in het 'Alles'-overzicht: in een gefilterde
+    // weergave zou de volgorde van verborgen items door elkaar raken.
+    if (activeTraveler !== null) return;
     itemsContainer.querySelectorAll('.item-list').forEach(list => {
       Sortable.create(list, {
         handle: '.drag-handle',
@@ -742,6 +840,7 @@ async function renderChecklist(id) {
   }
 
   async function persistOrder() {
+    if (activeTraveler !== null) return;
     const ids = Array.from(itemsContainer.querySelectorAll('.item')).map(li => Number(li.dataset.id));
     // Update local items array order to match DOM
     const byId = new Map(items.map(i => [i.id, i]));
@@ -777,9 +876,11 @@ async function renderChecklist(id) {
       if (!text) return;
       const category = newItemCat.value || 'Overig';
       const quantity = Math.max(1, Math.min(99, Number(newItemQty.value) || 1));
+      // Met een reiziger-tab actief hoort een nieuw item bij die reiziger.
+      const traveler = (activeTraveler && activeTraveler !== '__shared__') ? activeTraveler : undefined;
       try {
         const res = await api(`/api/checklists/${c.id}/items`, {
-          method: 'POST', body: { text, category, quantity },
+          method: 'POST', body: { text, category, quantity, traveler },
         });
         items.push(res.item);
         newItemIn.value = '';
@@ -839,6 +940,7 @@ async function renderChecklist(id) {
       el('div', { class: 'progress' }, progressBar),
       progressLabel,
     ),
+    travelerTabs(),
     addForm,
     itemsContainer,
   );

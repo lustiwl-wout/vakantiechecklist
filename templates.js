@@ -47,11 +47,14 @@ function defaultQuantities(days) {
   };
 }
 
-function travelerLabel(t, idx, total) {
+// Weergavenaam van een reiziger: eigen naam, of 'Reiziger N' bij meerdere
+// naamloze reizigers. Bij één naamloze reiziger geen label (alles is toch
+// van diegene).
+function travelerName(t, idx, total) {
   const name = t && t.name ? String(t.name).trim() : '';
-  if (name) return ` (${name})`;
-  if (total > 1) return ` (reiziger ${idx + 1})`;
-  return '';
+  if (name) return name;
+  if (total > 1) return `Reiziger ${idx + 1}`;
+  return null;
 }
 
 function generateItems({
@@ -67,7 +70,8 @@ function generateItems({
   quantities = {},
 }) {
   const items = [];
-  const add = (text, category, quantity = 1) => items.push({ text, category, quantity });
+  const add = (text, category, quantity = 1, traveler = null) =>
+    items.push({ text, category, quantity, traveler });
 
   const days = daysBetween(startDate, endDate);
   const home = isHomeCountry(destination);
@@ -119,14 +123,15 @@ function generateItems({
 
   // ===== Per reiziger: kleding (hoeveelheden) =====
   travelers.forEach((t, i) => {
-    const label = travelerLabel(t, i, travelers.length);
-    if (q.underwear > 0) add(`Ondergoed${label}`, 'Kleding', q.underwear);
-    if (q.socks > 0) add(`Sokken${label}`, 'Kleding', q.socks);
-    if (q.tshirts > 0) add(`T-shirts${label}`, 'Kleding', q.tshirts);
-    if (q.sweaters > 0) add(`Trui / vest${label}`, 'Kleding', q.sweaters);
-    if (q.bottoms > 0) add(`Broeken / rokken${label}`, 'Kleding', q.bottoms);
-    add(`Pyjama${label}`, 'Kleding');
-    add(`Comfortabele schoenen${label}`, 'Kleding');
+    const trav = travelerName(t, i, travelers.length);
+    const label = trav ? ` (${trav})` : '';
+    if (q.underwear > 0) add(`Ondergoed${label}`, 'Kleding', q.underwear, trav);
+    if (q.socks > 0) add(`Sokken${label}`, 'Kleding', q.socks, trav);
+    if (q.tshirts > 0) add(`T-shirts${label}`, 'Kleding', q.tshirts, trav);
+    if (q.sweaters > 0) add(`Trui / vest${label}`, 'Kleding', q.sweaters, trav);
+    if (q.bottoms > 0) add(`Broeken / rokken${label}`, 'Kleding', q.bottoms, trav);
+    add(`Pyjama${label}`, 'Kleding', 1, trav);
+    add(`Comfortabele schoenen${label}`, 'Kleding', 1, trav);
   });
 
   // ===== Weer (multi-select op temperatuur en condities) =====

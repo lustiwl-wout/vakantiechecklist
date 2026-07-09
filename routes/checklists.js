@@ -103,12 +103,12 @@ router.post('/', async (req, res) => {
       const values = [];
       const params = [];
       generated.forEach((it, idx) => {
-        const base = idx * 5;
-        params.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`);
-        values.push(checklist.id, it.text, it.category, it.position, it.quantity || 1);
+        const base = idx * 6;
+        params.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`);
+        values.push(checklist.id, it.text, it.category, it.position, it.quantity || 1, it.traveler || null);
       });
       await client.query(
-        `INSERT INTO items (checklist_id, text, category, position, quantity) VALUES ${params.join(', ')}`,
+        `INSERT INTO items (checklist_id, text, category, position, quantity, traveler) VALUES ${params.join(', ')}`,
         values
       );
     }
@@ -136,7 +136,7 @@ router.get('/:id', async (req, res) => {
   const checklist = await loadOwnedChecklist(req.userId, req.params.id);
   if (!checklist) return res.status(404).json({ error: 'Checklist niet gevonden' });
   const { rows: items } = await pool.query(
-    'SELECT id, text, category, is_checked, position, quantity, packed FROM items WHERE checklist_id = $1 ORDER BY position, id',
+    'SELECT id, text, category, is_checked, position, quantity, packed, traveler FROM items WHERE checklist_id = $1 ORDER BY position, id',
     [checklist.id]
   );
   res.json({ checklist, items });
@@ -170,11 +170,37 @@ router.patch('/:id', async (req, res) => {
     params.push(JSON.stringify(Array.isArray(req.body.activities) ? [...new Set(req.body.activities.map(String))] : []));
   }
 
-  if (!updates.length) return res.json({ ok: true });
+  if (!updates.length) return res.json({ ok: true, suggestions: [] });
   updates.push('updated_at = NOW()');
   params.push(checklist.id);
   await pool.query(`UPDATE checklists SET ${updates.join(', ')} WHERE id = $${p}`, params);
-  res.json({ ok: true });
+
+  // Bereken welke items de generator nú zou toevoegen die nog niet op de
+  // lijst staan — de gebruiker kiest zelf welke daarvan hij overneemt.
+  const { rows: fresh } = await pool.query('SELECT * FROM checklists WHERE id = $1', [checklist.id]);
+  const cur = fresh[0];
+  const { rows: existing } = await pool.query(
+    'SELECT text FROM items WHERE checklist_id = $1', [checklist.id]
+  );
+  const have = new Set(existing.map(r => r.text.trim().toLowerCase()));
+  const hasMedItems = existing.some(r => /^medicijn:/i.test(r.text.trim()));
+
+  const generated = generateItems({
+    destination: cur.destination,
+    startDate: cur.start_date,
+    endDate: cur.end_date,
+    travelers: cur.travelers,
+    transport: cur.transport,
+    weather: cur.weather,
+    accommodation: cur.accommodation,
+    activities: cur.activities,
+  });
+  const suggestions = generated
+    .filter(it => !have.has(it.text.trim().toLowerCase()))
+    .filter(it => !(hasMedItems && it.text === 'Persoonlijke medicijnen'))
+    .map(({ text, category, quantity, traveler }) => ({ text, category, quantity, traveler }));
+
+  res.json({ ok: true, suggestions });
 });
 
 router.delete('/:id', async (req, res) => {
@@ -194,6 +220,8 @@ router.post('/:id/items', async (req, res) => {
   if (!text) return res.status(400).json({ error: 'Tekst is verplicht' });
   let quantity = Number(req.body.quantity);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) quantity = 1;
+  const traveler = (typeof req.body.traveler === 'string' && req.body.traveler.trim())
+    ? req.body.traveler.trim().slice(0, 60) : null;
 
   const { rows: max } = await pool.query(
     'SELECT COALESCE(MAX(position), -1) AS max FROM items WHERE checklist_id = $1',
@@ -202,12 +230,53 @@ router.post('/:id/items', async (req, res) => {
   const position = Number(max[0].max) + 1;
 
   const { rows } = await pool.query(
-    `INSERT INTO items (checklist_id, text, category, position, quantity)
-     VALUES ($1, $2, $3, $4, $5)
-     RETURNING id, text, category, is_checked, position, quantity, packed`,
-    [checklist.id, text, category, position, quantity]
+    `INSERT INTO items (checklist_id, text, category, position, quantity, traveler)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, text, category, is_checked, position, quantity, packed, traveler`,
+    [checklist.id, text, category, position, quantity, traveler]
   );
   res.json({ item: rows[0] });
+});
+
+// Meerdere items in één keer toevoegen (gekozen suggesties na bewerken).
+router.post('/:id/items/bulk', async (req, res) => {
+  const checklist = await loadOwnedChecklist(req.userId, req.params.id);
+  if (!checklist) return res.status(404).json({ error: 'Checklist niet gevonden' });
+
+  const list = Array.isArray(req.body.items) ? req.body.items : [];
+  const cleaned = list
+    .map(it => ({
+      text: String((it && it.text) || '').trim().slice(0, 200),
+      category: (it && it.category) ? String(it.category).slice(0, 60) : 'Overig',
+      quantity: (Number.isInteger(Number(it && it.quantity)) && it.quantity >= 1 && it.quantity <= 99)
+        ? Number(it.quantity) : 1,
+      traveler: (it && typeof it.traveler === 'string' && it.traveler.trim())
+        ? it.traveler.trim().slice(0, 60) : null,
+    }))
+    .filter(it => it.text)
+    .slice(0, 200);
+  if (!cleaned.length) return res.json({ items: [] });
+
+  const { rows: max } = await pool.query(
+    'SELECT COALESCE(MAX(position), -1) AS max FROM items WHERE checklist_id = $1',
+    [checklist.id]
+  );
+  let position = Number(max[0].max);
+
+  const params = [];
+  const values = [];
+  cleaned.forEach((it, idx) => {
+    const base = idx * 6;
+    params.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6})`);
+    values.push(checklist.id, it.text, it.category, ++position, it.quantity, it.traveler);
+  });
+  const { rows } = await pool.query(
+    `INSERT INTO items (checklist_id, text, category, position, quantity, traveler)
+     VALUES ${params.join(', ')}
+     RETURNING id, text, category, is_checked, position, quantity, packed, traveler`,
+    values
+  );
+  res.json({ items: rows });
 });
 
 router.post('/:id/reorder', async (req, res) => {
@@ -262,8 +331,8 @@ router.post('/:id/duplicate', async (req, res) => {
     );
     const newId = cl[0].id;
     await client.query(
-      `INSERT INTO items (checklist_id, text, category, position, quantity)
-       SELECT $2, text, category, position, quantity FROM items WHERE checklist_id = $1 ORDER BY position, id`,
+      `INSERT INTO items (checklist_id, text, category, position, quantity, traveler)
+       SELECT $2, text, category, position, quantity, traveler FROM items WHERE checklist_id = $1 ORDER BY position, id`,
       [checklist.id, newId]
     );
     await client.query('COMMIT');

@@ -88,15 +88,16 @@ async function init() {
   await pool.query(`
     ALTER TABLE items ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 1;
     ALTER TABLE items ADD COLUMN IF NOT EXISTS packed INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE items ADD COLUMN IF NOT EXISTS traveler TEXT;
   `);
-  await convertLegacyQuantities();
+  await convertLegacyData();
 }
 
-// Zet bestaande items met '× N' in de tekst om naar het quantity-veld.
-// Idempotent: na conversie matcht de tekst het patroon niet meer.
-// Apart aanroepbaar omdat migrate.js data uit een oude database kan
+// Zet data uit oudere versies om naar de huidige velden. Idempotent en
+// apart aanroepbaar omdat migrate.js data uit een oude database kan
 // invoegen nádat init() al gedraaid heeft.
-async function convertLegacyQuantities() {
+async function convertLegacyData() {
+  // '× N' in de item-tekst → quantity-veld.
   await pool.query(`
     UPDATE items SET
       quantity = (regexp_match(text, '×\\s*(\\d+)'))[1]::int,
@@ -104,6 +105,25 @@ async function convertLegacyQuantities() {
     WHERE text ~ '×\\s*\\d+' AND quantity = 1
   `);
   await pool.query('UPDATE items SET packed = quantity WHERE is_checked AND packed = 0');
+
+  // '(reiziger N)' of '(Naam)' achteraan de tekst → traveler-veld.
+  await pool.query(`
+    UPDATE items SET traveler = initcap((regexp_match(text, '\\((reiziger \\d+)\\)\\s*$'))[1])
+    WHERE traveler IS NULL AND text ~ '\\(reiziger \\d+\\)\\s*$'
+  `);
+  const { rows: cls } = await pool.query('SELECT id, travelers FROM checklists');
+  for (const cl of cls) {
+    const names = (Array.isArray(cl.travelers) ? cl.travelers : [])
+      .map(t => t && t.name && String(t.name).trim())
+      .filter(Boolean);
+    for (const name of names) {
+      await pool.query(
+        `UPDATE items SET traveler = $1
+          WHERE checklist_id = $2 AND traveler IS NULL AND text LIKE '%(' || $1 || ')'`,
+        [name, cl.id]
+      );
+    }
+  }
 }
 
-module.exports = { pool, init, poolConfig, convertLegacyQuantities };
+module.exports = { pool, init, poolConfig, convertLegacyData };
