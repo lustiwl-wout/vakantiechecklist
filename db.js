@@ -82,6 +82,28 @@ async function init() {
       END IF;
     END $$;
   `);
+
+  // Migratie: aantallen als echte velden (quantity = hoeveel mee,
+  // packed = hoeveel al ingepakt) i.p.v. '× N' in de item-tekst.
+  await pool.query(`
+    ALTER TABLE items ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 1;
+    ALTER TABLE items ADD COLUMN IF NOT EXISTS packed INTEGER NOT NULL DEFAULT 0;
+  `);
+  await convertLegacyQuantities();
 }
 
-module.exports = { pool, init, poolConfig };
+// Zet bestaande items met '× N' in de tekst om naar het quantity-veld.
+// Idempotent: na conversie matcht de tekst het patroon niet meer.
+// Apart aanroepbaar omdat migrate.js data uit een oude database kan
+// invoegen nádat init() al gedraaid heeft.
+async function convertLegacyQuantities() {
+  await pool.query(`
+    UPDATE items SET
+      quantity = (regexp_match(text, '×\\s*(\\d+)'))[1]::int,
+      text = trim(regexp_replace(text, '\\s*×\\s*\\d+', ''))
+    WHERE text ~ '×\\s*\\d+' AND quantity = 1
+  `);
+  await pool.query('UPDATE items SET packed = quantity WHERE is_checked AND packed = 0');
+}
+
+module.exports = { pool, init, poolConfig, convertLegacyQuantities };

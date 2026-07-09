@@ -103,12 +103,12 @@ router.post('/', async (req, res) => {
       const values = [];
       const params = [];
       generated.forEach((it, idx) => {
-        const base = idx * 4;
-        params.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4})`);
-        values.push(checklist.id, it.text, it.category, it.position);
+        const base = idx * 5;
+        params.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`);
+        values.push(checklist.id, it.text, it.category, it.position, it.quantity || 1);
       });
       await client.query(
-        `INSERT INTO items (checklist_id, text, category, position) VALUES ${params.join(', ')}`,
+        `INSERT INTO items (checklist_id, text, category, position, quantity) VALUES ${params.join(', ')}`,
         values
       );
     }
@@ -136,7 +136,7 @@ router.get('/:id', async (req, res) => {
   const checklist = await loadOwnedChecklist(req.userId, req.params.id);
   if (!checklist) return res.status(404).json({ error: 'Checklist niet gevonden' });
   const { rows: items } = await pool.query(
-    'SELECT id, text, category, is_checked, position FROM items WHERE checklist_id = $1 ORDER BY position, id',
+    'SELECT id, text, category, is_checked, position, quantity, packed FROM items WHERE checklist_id = $1 ORDER BY position, id',
     [checklist.id]
   );
   res.json({ checklist, items });
@@ -192,6 +192,8 @@ router.post('/:id/items', async (req, res) => {
   const text = String(req.body.text || '').trim();
   const category = req.body.category ? String(req.body.category) : 'Overig';
   if (!text) return res.status(400).json({ error: 'Tekst is verplicht' });
+  let quantity = Number(req.body.quantity);
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) quantity = 1;
 
   const { rows: max } = await pool.query(
     'SELECT COALESCE(MAX(position), -1) AS max FROM items WHERE checklist_id = $1',
@@ -200,10 +202,10 @@ router.post('/:id/items', async (req, res) => {
   const position = Number(max[0].max) + 1;
 
   const { rows } = await pool.query(
-    `INSERT INTO items (checklist_id, text, category, position)
-     VALUES ($1, $2, $3, $4)
-     RETURNING id, text, category, is_checked, position`,
-    [checklist.id, text, category, position]
+    `INSERT INTO items (checklist_id, text, category, position, quantity)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, text, category, is_checked, position, quantity, packed`,
+    [checklist.id, text, category, position, quantity]
   );
   res.json({ item: rows[0] });
 });
@@ -260,8 +262,8 @@ router.post('/:id/duplicate', async (req, res) => {
     );
     const newId = cl[0].id;
     await client.query(
-      `INSERT INTO items (checklist_id, text, category, position)
-       SELECT $2, text, category, position FROM items WHERE checklist_id = $1 ORDER BY position, id`,
+      `INSERT INTO items (checklist_id, text, category, position, quantity)
+       SELECT $2, text, category, position, quantity FROM items WHERE checklist_id = $1 ORDER BY position, id`,
       [checklist.id, newId]
     );
     await client.query('COMMIT');

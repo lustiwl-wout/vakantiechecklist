@@ -67,7 +67,7 @@ function generateItems({
   quantities = {},
 }) {
   const items = [];
-  const add = (text, category) => items.push({ text, category });
+  const add = (text, category, quantity = 1) => items.push({ text, category, quantity });
 
   const days = daysBetween(startDate, endDate);
   const home = isHomeCountry(destination);
@@ -120,11 +120,11 @@ function generateItems({
   // ===== Per reiziger: kleding (hoeveelheden) =====
   travelers.forEach((t, i) => {
     const label = travelerLabel(t, i, travelers.length);
-    if (q.underwear > 0) add(`Ondergoed × ${q.underwear}${label}`, 'Kleding');
-    if (q.socks > 0) add(`Sokken × ${q.socks}${label}`, 'Kleding');
-    if (q.tshirts > 0) add(`T-shirts × ${q.tshirts}${label}`, 'Kleding');
-    if (q.sweaters > 0) add(`Trui / vest × ${q.sweaters}${label}`, 'Kleding');
-    if (q.bottoms > 0) add(`Broeken / rokken × ${q.bottoms}${label}`, 'Kleding');
+    if (q.underwear > 0) add(`Ondergoed${label}`, 'Kleding', q.underwear);
+    if (q.socks > 0) add(`Sokken${label}`, 'Kleding', q.socks);
+    if (q.tshirts > 0) add(`T-shirts${label}`, 'Kleding', q.tshirts);
+    if (q.sweaters > 0) add(`Trui / vest${label}`, 'Kleding', q.sweaters);
+    if (q.bottoms > 0) add(`Broeken / rokken${label}`, 'Kleding', q.bottoms);
     add(`Pyjama${label}`, 'Kleding');
     add(`Comfortabele schoenen${label}`, 'Kleding');
   });
@@ -276,11 +276,10 @@ function generateItems({
 
   // ===== Verzorging =====
   const nPpl = Math.max(1, travelers.length);
-  const x = nPpl > 1 ? ` × ${nPpl}` : '';
-  add(`Tandenborstel + tandpasta${x}`, 'Verzorging');
+  add('Tandenborstel + tandpasta', 'Verzorging', nPpl);
   add('Shampoo / douchegel', 'Verzorging');
   add('Conditioner', 'Verzorging');
-  add(`Deodorant${x}`, 'Verzorging');
+  add('Deodorant', 'Verzorging', nPpl);
   add('Scheerspullen / scheermesje', 'Verzorging');
   add('Haarborstel / kam', 'Verzorging');
   add('Vochtige doekjes', 'Verzorging');

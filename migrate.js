@@ -98,15 +98,27 @@ async function migrate() {
         );
       }
 
-      const { rows: items } = await src.query(
-        `SELECT id, checklist_id, text, category, is_checked, position, created_at
-           FROM items ORDER BY id`
-      );
+      // Oudere databases missen de kolommen quantity/packed — val dan
+      // terug op de basis-kolommen (de '× N'-conversie herstelt de
+      // aantallen daarna alsnog).
+      let items;
+      try {
+        ({ rows: items } = await src.query(
+          `SELECT id, checklist_id, text, category, is_checked, position, created_at, quantity, packed
+             FROM items ORDER BY id`
+        ));
+      } catch {
+        ({ rows: items } = await src.query(
+          `SELECT id, checklist_id, text, category, is_checked, position, created_at
+             FROM items ORDER BY id`
+        ));
+      }
       for (const it of items) {
         await client.query(
-          `INSERT INTO items (id, checklist_id, text, category, is_checked, position, created_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-          [it.id, it.checklist_id, it.text, it.category, it.is_checked, it.position, it.created_at]
+          `INSERT INTO items (id, checklist_id, text, category, is_checked, position, created_at, quantity, packed)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [it.id, it.checklist_id, it.text, it.category, it.is_checked, it.position, it.created_at,
+           it.quantity ?? 1, it.packed ?? 0]
         );
       }
 
@@ -116,6 +128,11 @@ async function migrate() {
       await client.query(`SELECT setval(pg_get_serial_sequence('items','id'), COALESCE((SELECT MAX(id) FROM items), 1))`);
 
       await client.query('COMMIT');
+
+      // Zet eventuele '× N'-teksten uit de oude database om naar quantity.
+      const { convertLegacyQuantities } = require('./db');
+      await convertLegacyQuantities();
+
       console.log(`[migrate] Klaar: ${users.length} users, ${cls.length} checklists, ${items.length} items gekopieerd.`);
     } catch (err) {
       await client.query('ROLLBACK');

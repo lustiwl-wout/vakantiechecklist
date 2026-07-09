@@ -544,8 +544,29 @@ async function renderChecklist(id) {
 
   const itemsContainer = el('div', { class: 'items-container' });
 
+  // Ingeklapte categorieën onthouden per checklist (alleen op dit apparaat).
+  const collapseKey = `vc_collapsed_${c.id}`;
+  let collapsedCats;
+  try { collapsedCats = new Set(JSON.parse(localStorage.getItem(collapseKey) || '[]')); }
+  catch { collapsedCats = new Set(); }
+  function saveCollapsed() {
+    try { localStorage.setItem(collapseKey, JSON.stringify([...collapsedCats])); } catch {}
+  }
+
+  const catCountSpans = new Map();
+
+  function updateCatCount(cat) {
+    const span = catCountSpans.get(cat);
+    if (!span) return;
+    const inCat = items.filter(i => (i.category || 'Overig') === cat);
+    const done = inCat.filter(i => i.is_checked).length;
+    span.textContent = `${done}/${inCat.length}`;
+    span.classList.toggle('complete', inCat.length > 0 && done === inCat.length);
+  }
+
   function paintItems() {
     clear(itemsContainer);
+    catCountSpans.clear();
     if (!items.length) {
       itemsContainer.append(el('div', { class: 'empty' }, 'Nog geen items op deze lijst.'));
       return;
@@ -565,33 +586,82 @@ async function renderChecklist(id) {
       for (const item of groups[cat]) {
         list.append(renderItem(item));
       }
-      itemsContainer.append(
-        el('div', { class: 'category-group' },
-          el('h2', {}, cat),
-          list,
-        )
+      const countSpan = el('span', { class: 'cat-count' });
+      catCountSpans.set(cat, countSpan);
+
+      const group = el('div', { class: 'category-group' + (collapsedCats.has(cat) ? ' collapsed' : '') });
+      const header = el('h2', { class: 'cat-header', role: 'button', tabindex: '0' },
+        el('span', { class: 'chevron no-print' }, '▸'),
+        el('span', { class: 'cat-name' }, cat),
+        countSpan,
       );
+      const toggle = () => {
+        const nowCollapsed = group.classList.toggle('collapsed');
+        if (nowCollapsed) collapsedCats.add(cat); else collapsedCats.delete(cat);
+        saveCollapsed();
+      };
+      header.addEventListener('click', toggle);
+      header.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+      });
+
+      group.append(header, list);
+      itemsContainer.append(group);
+      updateCatCount(cat);
     }
     initSortable();
   }
 
   function renderItem(item) {
+    // Werk alle UI-stukjes van deze rij bij op basis van de server-respons.
+    const applyState = (updated) => {
+      item.is_checked = updated.is_checked;
+      item.packed = updated.packed;
+      item.quantity = updated.quantity;
+      cb.checked = item.is_checked;
+      li.classList.toggle('done', item.is_checked);
+      if (qtyCount) qtyCount.textContent = `${item.packed}/${item.quantity}`;
+      paintProgress();
+      updateCatCount(item.category || 'Overig');
+    };
+
     const cb = el('input', {
       type: 'checkbox',
       checked: item.is_checked,
       onchange: async (e) => {
         const checked = e.target.checked;
         try {
-          await api(`/api/items/${item.id}`, { method: 'PATCH', body: { is_checked: checked } });
-          item.is_checked = checked;
-          li.classList.toggle('done', checked);
-          paintProgress();
+          const res = await api(`/api/items/${item.id}`, { method: 'PATCH', body: { is_checked: checked } });
+          applyState(res.item);
         } catch (err) {
           e.target.checked = !checked;
           toast(err.message);
         }
       },
     });
+
+    // Teller voor items met aantal > 1: met +/− pak je stuk voor stuk in.
+    let qtyCount = null;
+    let qtyControls = null;
+    if (item.quantity > 1) {
+      qtyCount = el('span', { class: 'qty-count' }, `${item.packed}/${item.quantity}`);
+      const step = async (delta) => {
+        const target = Math.max(0, Math.min(item.quantity, item.packed + delta));
+        if (target === item.packed) return;
+        try {
+          const res = await api(`/api/items/${item.id}`, { method: 'PATCH', body: { packed: target } });
+          applyState(res.item);
+        } catch (err) { toast(err.message); }
+      };
+      qtyControls = el('span', { class: 'qty no-print' },
+        el('button', { class: 'qty-btn', title: 'Eén minder ingepakt', onclick: (e) => { e.stopPropagation(); step(-1); } }, '−'),
+        qtyCount,
+        el('button', { class: 'qty-btn', title: 'Eén meer ingepakt', onclick: (e) => { e.stopPropagation(); step(1); } }, '+'),
+      );
+    }
+    const qtyPrint = item.quantity > 1
+      ? el('span', { class: 'qty-print' }, `× ${item.quantity}`)
+      : null;
 
     const textSpan = el('span', { class: 'text' }, item.text);
     textSpan.addEventListener('click', () => startInlineEdit(textSpan, item));
@@ -622,7 +692,7 @@ async function renderChecklist(id) {
     const li = el('li', {
       class: 'item' + (item.is_checked ? ' done' : ''),
       'data-id': item.id,
-    }, handle, cb, textSpan, editBtn, del);
+    }, handle, cb, textSpan, qtyPrint, qtyControls, editBtn, del);
     return li;
   }
 
@@ -683,6 +753,7 @@ async function renderChecklist(id) {
 
   // Add item form
   const newItemIn = el('input', { type: 'text', placeholder: 'Item toevoegen…' });
+  const newItemQty = el('input', { type: 'number', min: '1', max: '99', value: '1', 'aria-label': 'Aantal', class: 'qty-input', title: 'Aantal' });
   const newItemCat = el('select', { 'aria-label': 'Categorie' });
   let lastChosenCategory = null;
 
@@ -705,12 +776,14 @@ async function renderChecklist(id) {
       const text = newItemIn.value.trim();
       if (!text) return;
       const category = newItemCat.value || 'Overig';
+      const quantity = Math.max(1, Math.min(99, Number(newItemQty.value) || 1));
       try {
         const res = await api(`/api/checklists/${c.id}/items`, {
-          method: 'POST', body: { text, category },
+          method: 'POST', body: { text, category, quantity },
         });
         items.push(res.item);
         newItemIn.value = '';
+        newItemQty.value = '1';
         lastChosenCategory = category;
         paintCategoryOptions();
         paintItems();
@@ -718,7 +791,7 @@ async function renderChecklist(id) {
       } catch (err) { toast(err.message); }
     },
   },
-    newItemIn, newItemCat,
+    newItemIn, newItemQty, newItemCat,
     el('button', { type: 'submit', class: 'btn btn-primary' }, 'Toevoegen')
   );
 

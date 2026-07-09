@@ -19,26 +19,45 @@ router.patch('/:id', async (req, res) => {
   const item = await loadOwnedItem(req.userId, req.params.id);
   if (!item) return res.status(404).json({ error: 'Item niet gevonden' });
 
-  const updates = [];
-  const params = [];
-  let p = 1;
-  if (typeof req.body.is_checked === 'boolean') {
-    updates.push(`is_checked = $${p++}`);
-    params.push(req.body.is_checked);
+  // Nieuwe waarden bepalen; alles wat niet meegestuurd is blijft zoals het was.
+  let quantity = item.quantity;
+  if (req.body.quantity !== undefined) {
+    const n = Number(req.body.quantity);
+    if (!Number.isInteger(n) || n < 1 || n > 99) {
+      return res.status(400).json({ error: 'Aantal moet tussen 1 en 99 liggen' });
+    }
+    quantity = n;
   }
-  if (typeof req.body.text === 'string' && req.body.text.trim()) {
-    updates.push(`text = $${p++}`);
-    params.push(req.body.text.trim());
-  }
-  if (typeof req.body.category === 'string') {
-    updates.push(`category = $${p++}`);
-    params.push(req.body.category);
-  }
-  if (!updates.length) return res.json({ ok: true });
 
-  params.push(item.id);
-  await pool.query(`UPDATE items SET ${updates.join(', ')} WHERE id = $${p}`, params);
-  res.json({ ok: true });
+  let packed = Math.min(item.packed, quantity);
+  let isChecked;
+  if (req.body.packed !== undefined) {
+    const n = Number(req.body.packed);
+    if (!Number.isInteger(n) || n < 0) {
+      return res.status(400).json({ error: 'Ongeldig aantal ingepakt' });
+    }
+    packed = Math.min(n, quantity);
+    isChecked = packed >= quantity;
+  } else if (typeof req.body.is_checked === 'boolean') {
+    // Vinkje direct aan/uit = alles of niets ingepakt.
+    isChecked = req.body.is_checked;
+    packed = isChecked ? quantity : 0;
+  } else {
+    isChecked = packed >= quantity;
+  }
+
+  const text = (typeof req.body.text === 'string' && req.body.text.trim())
+    ? req.body.text.trim() : item.text;
+  const category = (typeof req.body.category === 'string' && req.body.category)
+    ? req.body.category : item.category;
+
+  const { rows } = await pool.query(
+    `UPDATE items SET quantity = $1, packed = $2, is_checked = $3, text = $4, category = $5
+      WHERE id = $6
+      RETURNING id, text, category, is_checked, position, quantity, packed`,
+    [quantity, packed, isChecked, text, category, item.id]
+  );
+  res.json({ ok: true, item: rows[0] });
 });
 
 router.delete('/:id', async (req, res) => {

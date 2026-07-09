@@ -264,13 +264,40 @@ textarea { min-height: 80px; resize: vertical; }
 .add-item button { flex: 0 0 auto; }
 
 .category-group { margin-bottom: 20px; break-inside: avoid; page-break-inside: avoid; }
-.category-group h2 {
+.category-group h2.cat-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 14px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--muted);
   margin: 16px 0 8px;
-  padding: 0 4px;
+  padding: 4px;
+  cursor: pointer;
+  user-select: none;
+  border-radius: 8px;
+}
+.category-group h2.cat-header:hover { background: var(--surface-2); }
+.cat-header .chevron {
+  display: inline-block;
+  transition: transform 0.15s;
+  transform: rotate(90deg);
+  font-size: 12px;
+}
+.category-group.collapsed .chevron { transform: rotate(0deg); }
+.category-group.collapsed .item-list { display: none; }
+.cat-header .cat-count {
+  margin-left: auto;
+  font-weight: 400;
+  background: var(--surface-2);
+  border-radius: 10px;
+  padding: 1px 10px;
+  font-size: 12px;
+}
+.cat-header .cat-count.complete {
+  background: #d1e7dd;
+  color: var(--success);
 }
 
 .item-list {
@@ -328,6 +355,38 @@ textarea { min-height: 80px; resize: vertical; }
 }
 .item .icon-btn:hover { background: var(--surface-2); color: var(--text); }
 .item .icon-btn.delete:hover { background: var(--danger-soft); color: var(--danger); }
+
+/* Teller voor items met aantal > 1 */
+.qty {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.qty-btn {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.qty-btn:hover { background: var(--surface-2); }
+.qty-count {
+  min-width: 38px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.qty-print { display: none; color: var(--muted); }
+.add-item .qty-input { flex: 0 0 64px; }
 
 .drag-handle {
   cursor: grab;
@@ -420,6 +479,17 @@ textarea { min-height: 80px; resize: vertical; }
   .item.done .text {
     text-decoration: line-through;
     color: #555;
+  }
+
+  /* Print toont altijd alles: ingeklapte categorieën uitklappen,
+     tellers vervangen door '× N'. */
+  .category-group.collapsed .item-list { display: block !important; }
+  .qty { display: none !important; }
+  .qty-print { display: inline !important; font-size: 9pt; }
+  .cat-header .cat-count {
+    background: none;
+    padding: 0;
+    font-size: 8pt;
   }
 
   @page { margin: 12mm; size: A4; }
