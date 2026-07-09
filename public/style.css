@@ -420,6 +420,12 @@ textarea { min-height: 80px; resize: vertical; }
 .poi-list li:last-child { border-bottom: none; }
 .poi-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .poi-dist { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.poi-nav {
+  white-space: nowrap;
+  min-height: 28px !important;
+  padding: 2px 8px !important;
+  flex-shrink: 0;
+}
 .poi-dismiss {
   min-height: 28px !important;
   padding: 2px 8px !important;

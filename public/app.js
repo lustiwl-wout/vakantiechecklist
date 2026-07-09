@@ -1511,12 +1511,22 @@ async function renderOmgeving(id) {
         return;
       }
       for (const p of visible) {
+        const mapsQuery = encodeURIComponent([p.name, c.destination].filter(Boolean).join(' '));
+        const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`;
         poiListEl.append(el('li', {},
           el('span', { class: 'poi-name' },
             p.website
               ? el('a', { href: p.website, target: '_blank', rel: 'noopener' }, p.name)
               : p.name),
           el('span', { class: 'poi-dist' }, `${p.distanceKm} km`),
+          el('a', {
+            class: 'btn btn-sm btn-ghost poi-nav',
+            href: mapsUrl,
+            target: '_blank',
+            rel: 'noopener',
+            title: `Open ${p.name} in Google Maps`,
+            'aria-label': `${p.name} openen in Google Maps`,
+          }, 'Navigatie'),
           el('button', {
             class: 'btn btn-sm btn-ghost poi-dismiss',
             title: 'Overslaan — zoek een vervangende locatie',
