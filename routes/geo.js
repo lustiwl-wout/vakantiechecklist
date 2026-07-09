@@ -240,6 +240,7 @@ router.get('/search', async (req, res) => {
     const data = await nominatimFetch(
       `/search?format=jsonv2&limit=5&addressdetails=1&accept-language=nl&q=${encodeURIComponent(q)}`
     );
+    const seenPlaces = new Set();
     const results = data
       .filter(isSeriousPlaceResult)
       .map(r => ({
@@ -250,10 +251,12 @@ router.get('/search', async (req, res) => {
         place: placeFromAddress(r.address, r.name),
       }))
       .filter(r => r.country && r.place)
-      .filter((r, i, arr) => arr.findIndex(x =>
-        x.place.toLowerCase() === r.place.toLowerCase()
-        && x.country === r.country
-      ) === i);
+      .filter(r => {
+        const dedupeKey = `${r.country}:${r.place.toLowerCase()}`;
+        if (seenPlaces.has(dedupeKey)) return false;
+        seenPlaces.add(dedupeKey);
+        return true;
+      });
     const payload = { results };
     cacheSet(key, payload);
     res.json(payload);
