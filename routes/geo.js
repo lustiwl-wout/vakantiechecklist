@@ -665,7 +665,48 @@ function prefetchNearby(lat, lng) {
 router.get('/debug', async (req, res) => {
   const c = parseCoords(req);
   const q = String(req.query.q || '').trim().slice(0, 60);
-  if (!c || q.length < 2) return res.status(400).json({ error: 'lat, lng en q zijn verplicht' });
+  const tag = String(req.query.tag || '').trim().slice(0, 60);
+  if (!c || (q.length < 2 && !tag)) {
+    return res.status(400).json({ error: 'lat, lng en q (naam) of tag (bv. leisure=water_park) zijn verplicht' });
+  }
+
+  // Tag-modus: alle objecten met deze tag in de buurt, óók zonder naam.
+  // Tag-zoekopdrachten zijn bij Overpass geïndexeerd en dus snel —
+  // anders dan naam-regexes.
+  if (tag) {
+    const m = tag.match(/^([a-z_:]+)(?:=([\w -]+))?$/i);
+    if (!m) return res.status(400).json({ error: 'Ongeldige tag; gebruik key of key=value' });
+    const selector = m[2] ? `["${m[1]}"="${m[2]}"]` : `["${m[1]}"]`;
+    try {
+      const data = await overpassFetch(`[out:json][timeout:15][bbox:${bboxFor(c.lat, c.lng, 25)}];
+nwr${selector};
+out center tags 50;`);
+      const results = (data.elements || []).map(el => {
+        const tags = el.tags || {};
+        const la = el.lat ?? (el.center && el.center.lat) ?? null;
+        const lo = el.lon ?? (el.center && el.center.lon) ?? null;
+        const cat = classify({ tags });
+        const t = liteTags(tags);
+        const name = tags.name || '(zonder naam)';
+        return {
+          name,
+          osm: `${el.type}/${el.id}`,
+          distanceKm: la != null ? Math.round(haversineKm(c.lat, c.lng, la, lo) * 10) / 10 : null,
+          category: cat,
+          verdict: cat && tags.name ? {
+            valid: isValidNearbyPoi(cat, tags.name, t),
+            lodging: isLodging(cat, tags.name, t),
+            score: notabilityScore(cat, t),
+            minRequired: MIN_SCORE[cat] ?? 0,
+          } : { valid: false, reden: tags.name ? 'geen categorie' : 'geen naam — onzichtbaar voor de app' },
+          tags,
+        };
+      }).sort((a, b) => (a.distanceKm ?? 99) - (b.distanceKm ?? 99));
+      return res.json({ source: 'debug-v2-tag', tag, around: c, count: results.length, results });
+    } catch (err) {
+      return res.status(502).json({ error: `Diagnose mislukt: ${err.message}` });
+    }
+  }
 
   try {
     // Zoeken-op-naam via Nominatim: daar is die dienst voor gebouwd
