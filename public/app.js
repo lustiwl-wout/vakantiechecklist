@@ -1230,9 +1230,46 @@ async function renderChecklist(id) {
         metaParts.length ? el('div', { class: 'checklist-meta' }, metaParts.join(' • ')) : null,
       ),
       el('div', { class: 'head-actions no-print' },
-        (c.lat != null && c.lng != null)
-          ? el('a', { href: `#/list/${c.id}/omgeving`, class: 'btn btn-sm' }, '🗺 Omgeving')
-          : null,
+        (() => {
+          if (c.lat == null || c.lng == null) return null;
+          const omgevingBtn = el('a', {
+            href: `#/list/${c.id}/omgeving`,
+            class: 'btn btn-sm',
+            disabled: true,
+            'aria-disabled': 'true',
+            title: 'Omgevingsgegevens worden geladen…',
+            style: 'opacity: 0.5; pointer-events: none;',
+          }, '🗺 Omgeving');
+          api(`/api/geo/nearby/ready?lat=${c.lat}&lng=${c.lng}`)
+            .then(r => {
+              if (r.ready) {
+                omgevingBtn.removeAttribute('disabled');
+                omgevingBtn.removeAttribute('aria-disabled');
+                omgevingBtn.removeAttribute('title');
+                omgevingBtn.style.opacity = '';
+                omgevingBtn.style.pointerEvents = '';
+              } else {
+                // Data nog niet beschikbaar: wacht op prefetch en activeer de knop
+                // zodra de data er is (maximaal 60 s).
+                const poll = setInterval(() => {
+                  api(`/api/geo/nearby/ready?lat=${c.lat}&lng=${c.lng}`)
+                    .then(r2 => {
+                      if (!r2.ready) return;
+                      clearInterval(poll);
+                      omgevingBtn.removeAttribute('disabled');
+                      omgevingBtn.removeAttribute('aria-disabled');
+                      omgevingBtn.removeAttribute('title');
+                      omgevingBtn.style.opacity = '';
+                      omgevingBtn.style.pointerEvents = '';
+                    })
+                    .catch(() => {});
+                }, 5000);
+                setTimeout(() => clearInterval(poll), 60000);
+              }
+            })
+            .catch(() => {});
+          return omgevingBtn;
+        })(),
         el('a', { href: `#/list/${c.id}/edit`, class: 'btn btn-sm' }, 'Aanpassen'),
         el('button', {
           class: 'btn btn-sm',

@@ -304,6 +304,15 @@ async function fetchNearbyLive(lat, lng) {
   return payload;
 }
 
+// Alleen cache-check: geen live-fetch. Geeft { ready: true/false } terug
+// zodat de frontend de Omgeving-knop pas toont als de data beschikbaar is.
+router.get('/nearby/ready', async (req, res) => {
+  const c = parseCoords(req);
+  if (!c) return res.status(400).json({ error: 'Ongeldige coördinaten' });
+  const cached = await cacheGetAny(nearbyKey(c.lat, c.lng), TTL_NEARBY);
+  res.json({ ready: !!(cached && cached.fresh) });
+});
+
 router.get('/nearby', async (req, res) => {
   const c = parseCoords(req);
   if (!c) return res.status(400).json({ error: 'Ongeldige coördinaten' });
