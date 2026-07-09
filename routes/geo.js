@@ -245,21 +245,42 @@ function classify(el) {
   return null;
 }
 
+// Bekendheids-score op basis van OSM-metadata. Bekende attracties hebben
+// een Wikipedia-artikel, website en openingstijden; een obscuur
+// hertenkampje of bosperceel heeft alleen een naam. Zonder externe
+// beoordelingen is dit de beste maat voor 'is dit een échte uitje'.
+function notabilityScore(tags) {
+  let s = 0;
+  if (tags.wikipedia || tags.wikidata) s += 4;
+  if (tags.website || tags['contact:website']) s += 2;
+  if (tags.opening_hours) s += 1;
+  if (tags.phone || tags['contact:phone']) s += 1;
+  if (tags.operator || tags.brand) s += 1;
+  if (tags.heritage || tags['heritage:operator'] || tags.historic) s += 1;
+  return s;
+}
+
+// Minimale score per categorie: hoe ruisgevoeliger de OSM-tag, hoe
+// strenger de drempel. Stranden hebben zelden metadata → geen drempel.
+const MIN_SCORE = {
+  themepark: 2, zoo: 2, aquarium: 2, waterpark: 2,
+  museum: 2, attraction: 2, restaurant: 1,
+  nature: 0, beach: 0,
+};
+
 function isValidNearbyPoi(cat, tags) {
   if (!cat || !tags.name) return false;
-  if (cat !== 'attraction') return true;
-  if (tags.artwork_type || tags.memorial || tags['memorial:type'] || tags.tourism === 'artwork') {
+  if (cat === 'attraction'
+      && (tags.artwork_type || tags.memorial || tags['memorial:type'] || tags.tourism === 'artwork')) {
     return false;
   }
-  return Boolean(
-    tags.website
-    || tags['contact:website']
-    || tags.wikipedia
-    || tags.wikidata
-    || tags.historic
-    || tags.heritage
-    || tags['heritage:operator']
-  );
+  // Natuur: elk bosperceel staat in OSM als nature_reserve. Alleen echte
+  // wandelbestemmingen: nationale parken, of gebieden met een
+  // Wikipedia-/Wikidata-vermelding.
+  if (cat === 'nature') {
+    return tags.boundary === 'national_park' || Boolean(tags.wikipedia || tags.wikidata);
+  }
+  return notabilityScore(tags) >= (MIN_SCORE[cat] ?? 0);
 }
 
 // ---- routes ----
@@ -328,7 +349,7 @@ router.get('/reverse', async (req, res) => {
 });
 
 function nearbyKey(lat, lng) {
-  return `nearby:v4:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+  return `nearby:v5:${lat.toFixed(2)}:${lng.toFixed(2)}`;
 }
 
 // Haalt omgevingsdata live op bij Overpass en schrijft hem in de cache.
@@ -366,6 +387,7 @@ async function fetchNearbyLive(lat, lng) {
       name: tags.name,
       distanceKm: Math.round(dist * 10) / 10,
       website: tags.website || tags['contact:website'] || null,
+      score: notabilityScore(tags),
     });
   }
 
@@ -376,8 +398,10 @@ async function fetchNearbyLive(lat, lng) {
       label: cdef.label,
       ages: cdef.ages,
       activity: cdef.activity,
+      // Bekendste eerst; afstand als tiebreaker. Zo wint Wildlands (met
+      // Wikipedia + website) van een naamloos hertenkampje om de hoek.
       pois: groups[cdef.key]
-        .sort((a, b) => a.distanceKm - b.distanceKm)
+        .sort((a, b) => (b.score - a.score) || (a.distanceKm - b.distanceKm))
         // Dedupliceer op naam (zelfde park kan als node én relation in OSM staan)
         .filter((p, i, arr) => arr.findIndex(x => x.name === p.name) === i)
         .slice(0, 15),
