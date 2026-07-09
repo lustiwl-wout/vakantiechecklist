@@ -256,6 +256,8 @@ function classify(el) {
   if (t.zoo === 'petting_zoo') return 'pettingzoo';
   if (t.tourism === 'zoo') return 'zoo';
   if (t.tourism === 'aquarium') return 'aquarium';
+  // Duikstekken dragen soms een water_park-tag maar zijn geen zwem-uitje.
+  if (t.sport === 'scuba_diving') return null;
   if (t.leisure === 'water_park' || t.leisure === 'swimming_pool'
       || (t.leisure === 'sports_centre'
           && (t.sport === 'swimming' || /zwembad|bosbad|zwemparadijs/i.test(String(t.name || ''))))) return 'waterpark';
