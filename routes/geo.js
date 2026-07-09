@@ -194,6 +194,9 @@ function createCountryPlaceDedupeKey(country, place) {
 const POI_CATEGORIES = [
   { key: 'themepark', selectors: ['["tourism"="theme_park"]'], radiusKm: 35, cap: 40, label: 'Pretparken', ages: 'kinderen en tieners', activity: 'themepark' },
   { key: 'zoo', selectors: ['["tourism"="zoo"]'], radiusKm: 35, cap: 40, label: 'Dierentuinen', ages: 'alle leeftijden', activity: 'daytrip' },
+  // Kinderboerderijen zijn een lokaal uitje (kleinere straal) en horen
+  // niet tussen de dierentuinen.
+  { key: 'pettingzoo', selectors: ['["zoo"="petting_zoo"]'], radiusKm: 15, cap: 20, label: 'Kinderboerderijen', ages: 'jonge kinderen', activity: 'daytrip' },
   { key: 'aquarium', selectors: ['["tourism"="aquarium"]'], radiusKm: 35, cap: 20, label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip' },
   // Bosbaden/openluchtzwembaden staan in OSM zelden als water_park maar
   // als swimming_pool of sports_centre+swimming. Die tags zijn ruizig
@@ -237,6 +240,7 @@ out tags 10;`;
 function classify(el) {
   const t = el.tags || {};
   if (t.tourism === 'theme_park') return 'themepark';
+  if (t.zoo === 'petting_zoo') return 'pettingzoo';
   if (t.tourism === 'zoo') return 'zoo';
   if (t.tourism === 'aquarium') return 'aquarium';
   if (t.leisure === 'water_park' || t.leisure === 'swimming_pool'
@@ -274,7 +278,6 @@ function liteTags(tags) {
     lodgingTag: LODGING_TOURISM_TAGS.has(String(tags.tourism || ''))
       || tags.building === 'hotel' || tags.leisure === 'summer_camp' || tags.leisure === 'resort',
     nationalPark: tags.boundary === 'national_park',
-    pettingZoo: tags.zoo === 'petting_zoo',
     // De specifieke water_park-tag is zelf al een sterk signaal (wordt
     // zelden misbruikt); de score-drempel geldt alleen voor de ruizige
     // swimming_pool-/sports_centre-varianten. Zo blijft Aqua Mundo
@@ -295,7 +298,6 @@ function mergeLite(a, b) {
     memorialArt: a.memorialArt || b.memorialArt,
     lodgingTag: a.lodgingTag || b.lodgingTag,
     nationalPark: a.nationalPark || b.nationalPark,
-    pettingZoo: a.pettingZoo || b.pettingZoo,
     waterParkTag: a.waterParkTag || b.waterParkTag,
   };
 }
@@ -316,8 +318,11 @@ function notabilityScore(cat, t) {
 
 // Minimale score per categorie: hoe ruisgevoeliger de OSM-tag, hoe
 // strenger de drempel. Stranden hebben zelden metadata → geen drempel.
+// zoo op 1 (niet 2): tourism=zoo wordt zelden misbruikt, en echte kleine
+// parken (Almere Jungle) staan vaak mager getagd in OSM. Eén signaal
+// volstaat; plekken zonder énige metadata (VéFauna) blijven buiten beeld.
 const MIN_SCORE = {
-  themepark: 2, zoo: 2, aquarium: 2, waterpark: 2,
+  themepark: 2, zoo: 1, pettingzoo: 1, aquarium: 2, waterpark: 2,
   museum: 2, attraction: 2, restaurant: 1,
   nature: 0, beach: 0,
 };
@@ -391,13 +396,10 @@ function isValidNearbyPoi(cat, name, t) {
   if (cat === 'nature') {
     return t.nationalPark || t.wikipedia || Boolean(t.website);
   }
-  // Kinderboerderijen hebben zelden meer metadata dan openingstijden,
-  // maar zijn geliefde gratis gezinsuitjes — lagere drempel. Voor echte
-  // water_park-objecten geldt de tag zelf als bewijs (Aqua Mundo heeft
-  // geen eigen website in OSM); de drempel is er voor de ruizige
-  // swimming_pool-varianten.
+  // Voor echte water_park-objecten geldt de tag zelf als bewijs
+  // (Aqua Mundo heeft geen eigen website in OSM); de drempel is er
+  // voor de ruizige swimming_pool-varianten.
   let min = MIN_SCORE[cat] ?? 0;
-  if (cat === 'zoo' && t.pettingZoo) min = 1;
   if (cat === 'waterpark' && t.waterParkTag) min = 0;
   return notabilityScore(cat, t) >= min;
 }
@@ -468,7 +470,7 @@ router.get('/reverse', async (req, res) => {
 });
 
 function nearbyKey(lat, lng) {
-  return `nearby:v10:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+  return `nearby:v11:${lat.toFixed(2)}:${lng.toFixed(2)}`;
 }
 
 // Haalt omgevingsdata live op bij Overpass en schrijft hem in de cache.

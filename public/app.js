@@ -1412,9 +1412,11 @@ function fitsTravelers(catKey, travelers) {
   const anyKid = ages.some(a => a >= 2 && a < 13);
   const anyTeen = ages.some(a => a >= 13 && a < 18);
   const anySchoolPlus = ages.some(a => a >= 6);
+  const anyYoungKid = ages.some(a => a < 13);
   switch (catKey) {
     case 'themepark': return anyKid || anyTeen;
     case 'waterpark': return anyKid || anyTeen;
+    case 'pettingzoo': return anyYoungKid;
     case 'museum': return anySchoolPlus;
     default: return true; // dierentuin, aquarium, strand: iedereen
   }
