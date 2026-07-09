@@ -283,6 +283,8 @@ function liteTags(tags) {
     lodgingTag: LODGING_TOURISM_TAGS.has(String(tags.tourism || ''))
       || tags.building === 'hotel' || tags.leisure === 'summer_camp' || tags.leisure === 'resort',
     nationalPark: tags.boundary === 'national_park',
+    // Expliciet besloten toegang (alleen gasten/privé) = geen uitje.
+    accessRestricted: ['customers', 'private', 'no'].includes(String(tags.access || '')),
     // De specifieke water_park-tag is zelf al een sterk signaal (wordt
     // zelden misbruikt); de score-drempel geldt alleen voor de ruizige
     // swimming_pool-/sports_centre-varianten. Zo blijft Aqua Mundo
@@ -303,6 +305,7 @@ function mergeLite(a, b) {
     memorialArt: a.memorialArt || b.memorialArt,
     lodgingTag: a.lodgingTag || b.lodgingTag,
     nationalPark: a.nationalPark || b.nationalPark,
+    accessRestricted: a.accessRestricted || b.accessRestricted,
     waterParkTag: a.waterParkTag || b.waterParkTag,
   };
 }
@@ -382,6 +385,7 @@ function isLodging(cat, name, t) {
 function isValidNearbyPoi(cat, name, t) {
   if (!cat || !name) return false;
   if (t.memorialArt) return false;
+  if (t.accessRestricted) return false;
   if (hasGenericName(name, t)) return false;
   if (isLodging(cat, name, t)) return false;
 
