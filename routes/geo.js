@@ -86,7 +86,13 @@ async function overpassFetch(query) {
         signal: AbortSignal.timeout(30000),
       });
       if (!res.ok) throw new Error(`Overpass ${res.status} (${endpoint})`);
-      return await res.json();
+      const data = await res.json();
+      // Een drukke server geeft timeouts als HTTP 200 met een 'remark' en
+      // nul elementen terug. Dat telt als fout — probeer de mirror.
+      if (data.remark && (data.elements || []).length === 0) {
+        throw new Error(`Overpass remark (${endpoint}): ${data.remark}`);
+      }
+      return data;
     } catch (err) {
       lastErr = err;
       console.warn('[geo] endpoint faalde, probeer volgende:', endpoint, '-', err.message);
@@ -138,6 +144,14 @@ const POI_CATEGORIES = [
 ];
 
 function buildOverpassQuery(lat, lng) {
+  // Een globale bounding box maakt de query fundamenteel goedkoop: elke
+  // tag-zoekopdracht blijft binnen het 35km-gebied in plaats van tegen
+  // wereldwijde indexen aan te lopen. Zonder bbox viel de eerste
+  // categorie op drukke servers al om ('Query timed out at line 3').
+  const dLat = 35 / 111;
+  const dLng = 35 / (111 * Math.max(0.2, Math.cos(lat * Math.PI / 180)));
+  const bbox = `${(lat - dLat).toFixed(4)},${(lng - dLng).toFixed(4)},${(lat + dLat).toFixed(4)},${(lng + dLng).toFixed(4)}`;
+
   // Elk blok krijgt zijn eigen 'out' met cap. De landsgrens-detectie
   // gebruikt bewust grens-wégen + rel(bw): een 'around' op complete
   // landsrelaties is zó zwaar dat Overpass de query afkapt en (met een
@@ -148,7 +162,7 @@ function buildOverpassQuery(lat, lng) {
       .join('\n  ');
     return `(\n  ${sel}\n);\nout center ${c.cap};`;
   }).join('\n');
-  return `[out:json][timeout:25];
+  return `[out:json][timeout:25][bbox:${bbox}];
 ${blocks}
 way["boundary"="administrative"]["admin_level"="2"](around:30000,${lat},${lng});
 rel(bw)["boundary"="administrative"]["admin_level"="2"];
