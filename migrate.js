@@ -27,15 +27,9 @@ async function migrate() {
     return;
   }
 
-  const sslFor = (url) => ({
-    connectionString: url,
-    ssl: /sslmode=(require|verify-ca|verify-full)/i.test(url) || /\.neon\.tech/i.test(url)
-      ? { rejectUnauthorized: false } : false,
-    max: 3,
-  });
-
-  const src = new Pool(sslFor(oldUrl));
-  const dst = new Pool(sslFor(newUrl));
+  const { poolConfig } = require('./db');
+  const src = new Pool(poolConfig(oldUrl, 3));
+  const dst = new Pool(poolConfig(newUrl, 3));
 
   try {
     // Zorg dat het schema bestaat in de nieuwe DB.

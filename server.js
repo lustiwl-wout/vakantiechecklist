@@ -25,6 +25,7 @@ app.use(cookieParser());
 app.use('/api/auth', authRoutes);
 app.use('/api/checklists', checklistRoutes);
 app.use('/api/items', itemRoutes);
+app.use('/admin', require('./routes/admin'));
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

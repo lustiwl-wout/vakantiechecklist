@@ -1,13 +1,25 @@
 const { Pool } = require('pg');
 
-const url = process.env.DATABASE_URL || '';
-const useSSL = /sslmode=(require|verify-ca|verify-full)/i.test(url) || /\.neon\.tech/i.test(url);
+// We stellen ssl expliciet in via de ssl-optie en strippen de ssl-params
+// uit de URL — anders geeft pg >= 8.16 een (onterechte) security warning
+// over sslmode-aliassen.
+function poolConfig(url, max = 5) {
+  const useSSL = /sslmode=(require|verify-ca|verify-full)/i.test(url) || /\.neon\.tech/i.test(url);
+  let clean = url;
+  try {
+    const u = new URL(url);
+    u.searchParams.delete('sslmode');
+    u.searchParams.delete('channel_binding');
+    clean = u.toString();
+  } catch { /* geen geldige URL — laat pg zelf klagen */ }
+  return {
+    connectionString: clean,
+    ssl: useSSL ? { rejectUnauthorized: false } : false,
+    max,
+  };
+}
 
-const pool = new Pool({
-  connectionString: url,
-  ssl: useSSL ? { rejectUnauthorized: false } : false,
-  max: 5,
-});
+const pool = new Pool(poolConfig(process.env.DATABASE_URL || ''));
 
 async function init() {
   await pool.query(`
@@ -72,4 +84,4 @@ async function init() {
   `);
 }
 
-module.exports = { pool, init };
+module.exports = { pool, init, poolConfig };
