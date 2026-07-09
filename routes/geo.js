@@ -361,9 +361,11 @@ const LODGING_NAME_RE = /groepsaccommodatie|groepsverblijf|vakantiehuis|vakantie
 // Bedrijven die zichzelf als attractie of waterpark taggen maar geen
 // dagje uit zijn.
 const ATTRACTION_NAME_BLOCK = /manege|ruitersport|partycentrum|zalencentrum|feestzaal|kinderopvang|kinderdagverblijf/i;
-// Zwemscholen én losse sub-bassins van een groter zwembad (peuterbad,
-// wedstrijdbad…) zijn geen eigen uitje.
-const WATERPARK_NAME_BLOCK = /zwemschool|zwemles|sportcentrum|sporthal|sportschool|^(peuterbad|wedstrijdbad|buitenbad|binnenbad|recreatiebad|doelgroepenbad|instructiebad|therapiebad|whirlpool)$/i;
+// Zwemscholen, losse sub-bassins (peuterbad, wedstrijdbad…) én
+// attractie-onderdelen ín een zwemparadijs (wildwaterbaan, glijbaan,
+// golfslagbad…) zijn geen eigen uitje — het park zelf staat al op de
+// lijst.
+const WATERPARK_NAME_BLOCK = /zwemschool|zwemles|sportcentrum|sporthal|sportschool|wildwaterbaan|glijbaan|golfslagbad|bubbelbad|springkuil|duikkuil|stroomversnelling|^(peuterbad|kleuterbad|babybad|wedstrijdbad|buitenbad|binnenbad|recreatiebad|doelgroepenbad|instructiebad|therapiebad|whirlpool)$/i;
 
 // Een naam die alleen een soortnaam is ("PARK", "Zwembad", "Museum") is
 // vrijwel altijd data-vervuiling of een verkeerd getagd bedrijf — echte
