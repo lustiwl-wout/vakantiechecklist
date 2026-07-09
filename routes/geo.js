@@ -195,7 +195,12 @@ const POI_CATEGORIES = [
   { key: 'themepark', selectors: ['["tourism"="theme_park"]'], radiusKm: 35, cap: 40, label: 'Pretparken', ages: 'kinderen en tieners', activity: 'themepark' },
   { key: 'zoo', selectors: ['["tourism"="zoo"]'], radiusKm: 35, cap: 40, label: 'Dierentuinen', ages: 'alle leeftijden', activity: 'daytrip' },
   { key: 'aquarium', selectors: ['["tourism"="aquarium"]'], radiusKm: 35, cap: 20, label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip' },
-  { key: 'waterpark', selectors: ['["leisure"="water_park"]'], radiusKm: 35, cap: 20, label: 'Waterparken / zwemparadijzen', ages: 'kinderen en tieners', activity: 'pool' },
+  // Bosbaden/openluchtzwembaden staan in OSM zelden als water_park maar
+  // als swimming_pool of sports_centre+swimming. Die tags zijn ruizig
+  // (elk privé-bassin), maar de naam-eis in de query en de bekendheids-
+  // score filteren dat weg: alleen zwembaden met een eigen website of
+  // wiki-vermelding komen door (Bosbad Zwinderen wél, losse bassins niet).
+  { key: 'waterpark', selectors: ['["leisure"="water_park"]', '["leisure"="swimming_pool"]', '["leisure"="sports_centre"]["sport"="swimming"]'], radiusKm: 35, cap: 40, label: 'Zwembaden & waterparken', ages: 'alle leeftijden', activity: 'pool' },
   { key: 'nature', selectors: ['["boundary"="national_park"]', '["leisure"="nature_reserve"]'], radiusKm: 35, cap: 40, label: 'Natuur & wandelgebieden', ages: 'alle leeftijden', activity: 'hiking' },
   { key: 'museum', selectors: ['["tourism"="museum"]'], radiusKm: 25, cap: 40, label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural' },
   { key: 'attraction', selectors: ['["tourism"="attraction"]'], radiusKm: 20, cap: 40, label: 'Bezienswaardigheden & uitjes', ages: 'alle leeftijden', activity: 'daytrip' },
@@ -234,7 +239,8 @@ function classify(el) {
   if (t.tourism === 'theme_park') return 'themepark';
   if (t.tourism === 'zoo') return 'zoo';
   if (t.tourism === 'aquarium') return 'aquarium';
-  if (t.leisure === 'water_park') return 'waterpark';
+  if (t.leisure === 'water_park' || t.leisure === 'swimming_pool'
+      || (t.leisure === 'sports_centre' && t.sport === 'swimming')) return 'waterpark';
   if (t.boundary === 'national_park' || t.leisure === 'nature_reserve') return 'nature';
   if (t.tourism === 'museum') return 'museum';
   if (t.natural === 'beach') return 'beach';
@@ -434,7 +440,7 @@ router.get('/reverse', async (req, res) => {
 });
 
 function nearbyKey(lat, lng) {
-  return `nearby:v7:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+  return `nearby:v8:${lat.toFixed(2)}:${lng.toFixed(2)}`;
 }
 
 // Haalt omgevingsdata live op bij Overpass en schrijft hem in de cache.
