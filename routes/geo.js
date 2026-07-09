@@ -612,10 +612,13 @@ function buildPayload(lat, lng, raw) {
           website: c2.t.website,
           score: notabilityScore(cdef.key, c2.t),
         }))
-        // Bekendste eerst; afstand als tiebreaker. Zo wint Wildlands (met
-        // Wikipedia + website) van een naamloos hertenkampje om de hoek.
-        .sort((a, b) => (b.score - a.score) || (a.distanceKm - b.distanceKm))
-        .slice(0, 15);
+        // Dichtbij eerst; bekendheid als tiebreaker. De rommel is al door
+        // het filter tegengehouden, dus score-eerst sorteren loste een
+        // verdwenen probleem op en verdrong juist échte uitjes om de
+        // hoek: in de Randstad duwden vijftien verre zwembaden-met-website
+        // het bad op 2 km én Aqua Mundo (score 0) van de lijst.
+        .sort((a, b) => (a.distanceKm - b.distanceKm) || (b.score - a.score))
+        .slice(0, 20);
       return { key: cdef.key, label: cdef.label, ages: cdef.ages, activity: cdef.activity, pois };
     })
     .filter(cdef => cdef.pois.length);
