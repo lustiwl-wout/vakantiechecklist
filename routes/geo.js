@@ -596,7 +596,7 @@ function buildPayload(lat, lng, raw) {
     for (let i = 0; ; i++) {
       const k = i === 0 ? baseKey : `${baseKey}#${i}`;
       const cur = byName.get(k);
-      if (!cur) { entry = { key: k, name: tags.name, distanceKm: dist, t }; byName.set(k, entry); break; }
+      if (!cur) { entry = { key: k, name: tags.name, distanceKm: dist, la: plat, lo: plng, t }; byName.set(k, entry); break; }
       if (Math.abs(cur.distanceKm - dist) < 2) {
         cur.t = mergeLite(cur.t, t);
         cur.distanceKm = Math.min(cur.distanceKm, dist);
@@ -614,6 +614,8 @@ function buildPayload(lat, lng, raw) {
         .map(c2 => ({
           name: c2.name,
           distanceKm: Math.round(c2.distanceKm * 10) / 10,
+          lat: Math.round(c2.la * 1000) / 1000,
+          lng: Math.round(c2.lo * 1000) / 1000,
           website: c2.t.website,
           score: notabilityScore(cdef.key, c2.t),
         }))
@@ -634,6 +636,98 @@ function buildPayload(lat, lng, raw) {
     .filter(Boolean);
 
   return { categories, neighbours: neighbours.map(({ code, name, euro, idCard }) => ({ code, name, euro, idCard })) };
+}
+
+// ---- Google-sterren (optioneel, vereist GOOGLE_PLACES_API_KEY) ----
+//
+// Beoordelingen komen uit de Places API en worden per uitje 30 dagen
+// gecachet — het maximum dat Googles voorwaarden toestaan, en genoeg om
+// binnen het gratis maandtegoed te blijven. Een maandteller (persistent
+// in geo_cache) kapt af vóór het tegoed op is; zonder sleutel of boven
+// budget verschijnen er simpelweg geen sterren.
+
+const GPLACES_MONTHLY_BUDGET = 4500;
+
+async function googleBudgetOk() {
+  const month = new Date().toISOString().slice(0, 7);
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO geo_cache (key, data) VALUES ($1, '{"n":1}')
+       ON CONFLICT (key) DO UPDATE
+         SET data = jsonb_set(geo_cache.data, '{n}', (((geo_cache.data->>'n')::int) + 1)::text::jsonb)
+       RETURNING (data->>'n')::int AS n`,
+      [`gplaces:usage:${month}`]
+    );
+    const n = rows[0].n;
+    if (n > GPLACES_MONTHLY_BUDGET) {
+      if (n === GPLACES_MONTHLY_BUDGET + 1) console.warn('[gplaces] maandbudget bereikt — sterren pauzeren tot volgende maand');
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function googleRating(name, lat, lng) {
+  const key = `grating:v1:${name.toLowerCase()}:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+  const hit = await cacheGetAny(key, TTL_NEARBY);
+  if (hit && hit.fresh) return hit.data;
+  if (!process.env.GOOGLE_PLACES_API_KEY) return null;
+  if (!(await googleBudgetOk())) return null;
+
+  try {
+    const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': process.env.GOOGLE_PLACES_API_KEY,
+        // FieldMask beperkt tot wat we tonen — bepaalt ook het tarief.
+        'X-Goog-FieldMask': 'places.rating,places.userRatingCount',
+      },
+      body: JSON.stringify({
+        textQuery: name,
+        locationBias: { circle: { center: { latitude: lat, longitude: lng }, radius: 3000 } },
+        maxResultCount: 1,
+        languageCode: 'nl',
+      }),
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) throw new Error(`Places ${res.status}`);
+    const data = await res.json();
+    const p = (data.places || [])[0];
+    // Ook 'geen match' cachen we: anders betalen we die opzoeking elke keer.
+    const out = (p && p.rating) ? { rating: p.rating, count: p.userRatingCount || 0 } : { rating: null };
+    await cacheSet(key, out);
+    return out;
+  } catch (err) {
+    console.warn('[gplaces]', name, '-', err.message);
+    return null;
+  }
+}
+
+// Verrijkt de payload met sterren. Cache-hits zijn vrijwel gratis; per
+// verzoek doen we maximaal 40 nieuwe Google-opzoekingen (concurrentie 6)
+// — wat overblijft krijgt zijn sterren bij een volgend bezoek.
+async function enrichWithRatings(payload) {
+  if (!process.env.GOOGLE_PLACES_API_KEY) return payload;
+  const pois = payload.categories.flatMap(c => c.pois)
+    .filter(p => p.lat != null && p.lng != null);
+  let newLookups = 0;
+  for (let i = 0; i < pois.length; i += 6) {
+    const batch = pois.slice(i, i + 6);
+    if (newLookups >= 40) break;
+    await Promise.all(batch.map(async p => {
+      const cached = await cacheGetAny(`grating:v1:${p.name.toLowerCase()}:${p.lat.toFixed(2)}:${p.lng.toFixed(2)}`, TTL_NEARBY);
+      if (!(cached && cached.fresh)) newLookups++;
+      const r = await googleRating(p.name, p.lat, p.lng);
+      if (r && r.rating) {
+        p.rating = r.rating;
+        p.ratingCount = r.count;
+      }
+    }));
+  }
+  return payload;
 }
 
 // Verse fetch op de achtergrond, zonder de aanvrager te laten wachten.
@@ -675,16 +769,16 @@ router.get('/nearby', async (req, res) => {
   // Vernieuwen-knop (refresh=1) wacht op verse data.
   if (!refresh && usable) {
     if (!cached.fresh) backgroundRefresh(c.lat, c.lng);
-    return res.json(buildPayload(c.lat, c.lng, cached.data));
+    return res.json(await enrichWithRatings(buildPayload(c.lat, c.lng, cached.data)));
   }
 
   try {
     const raw = await fetchNearbyRaw(c.lat, c.lng);
-    res.json(buildPayload(c.lat, c.lng, raw));
+    res.json(await enrichWithRatings(buildPayload(c.lat, c.lng, raw)));
   } catch (err) {
     console.error('[geo/nearby]', err.message);
     // Verouderde data is beter dan een foutmelding.
-    if (usable) return res.json(buildPayload(c.lat, c.lng, cached.data));
+    if (usable) return res.json(await enrichWithRatings(buildPayload(c.lat, c.lng, cached.data)));
     res.status(502).json({ error: 'Omgevingsinformatie is tijdelijk niet beschikbaar — probeer het later opnieuw' });
   }
 });
@@ -697,7 +791,9 @@ function prefetchNearby(lat, lng) {
     .then(hit => {
       if (usableRaw(hit) && hit.fresh) return null;
       console.log('[geo/prefetch] omgeving voorladen voor', lat.toFixed(2), lng.toFixed(2));
-      return fetchNearbyRaw(lat, lng);
+      // Ook de sterren alvast warm cachen — dan is de eerste weergave compleet.
+      return fetchNearbyRaw(lat, lng)
+        .then(raw => enrichWithRatings(buildPayload(lat, lng, raw)));
     })
     .catch(err => console.warn('[geo/prefetch] mislukt (geen probleem):', err.message));
 }

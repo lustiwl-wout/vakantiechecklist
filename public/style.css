@@ -418,6 +418,8 @@ textarea { min-height: 80px; resize: vertical; }
 .poi-list li:last-child { border-bottom: none; }
 .poi-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .poi-dist { color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.poi-rating { font-size: 13px; white-space: nowrap; }
+.poi-rating .muted { font-size: 12px; }
 .poi-nav {
   white-space: nowrap;
   min-height: 28px !important;

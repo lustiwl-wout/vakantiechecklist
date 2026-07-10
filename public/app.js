@@ -1465,7 +1465,11 @@ async function renderOmgeving(id, epoch) {
     el('h1', { style: 'margin-top: 8px' }, `In de buurt van ${c.destination || 'je bestemming'}`),
     el('p', { class: 'muted' },
       'Uitjes binnen ± 35 km van je bestemming, afgestemd op je reisgezelschap. ',
-      'Zet iets op je programma, dan zetten we de spullen die je ervoor nodig hebt meteen klaar op je inpaklijst.'),
+      'Zet iets op je programma, dan zetten we de spullen die je ervoor nodig hebt meteen klaar op je inpaklijst.',
+      // Verplichte vermelding wanneer Places-beoordelingen getoond worden.
+      geo.categories.some(cat => cat.pois.some(p => p.rating))
+        ? el('span', {}, ' Beoordelingen: powered by Google.')
+        : null),
   );
 
   // Grens-hint: buurland dichtbij → dagje over de grens.
@@ -1542,7 +1546,12 @@ async function renderOmgeving(id, epoch) {
           el('span', { class: 'poi-name' },
             p.website
               ? el('a', { href: p.website, target: '_blank', rel: 'noopener' }, p.name)
-              : p.name),
+              : p.name,
+            p.rating
+              ? el('span', { class: 'poi-rating', title: `${p.ratingCount || 0} Google-beoordelingen` },
+                  ` ⭐ ${p.rating.toFixed(1).replace('.', ',')}`,
+                  p.ratingCount ? el('span', { class: 'muted' }, ` (${p.ratingCount.toLocaleString('nl-NL')})`) : null)
+              : null),
           el('span', { class: 'poi-dist' }, `${p.distanceKm} km`),
           el('a', {
             class: 'btn btn-sm btn-ghost poi-nav',
