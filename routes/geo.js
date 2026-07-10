@@ -681,12 +681,7 @@ async function googleBudgetOk() {
 async function googleRating(name, lat, lng) {
   const key = `grating:v1:${name.toLowerCase()}:${lat.toFixed(2)}:${lng.toFixed(2)}`;
   const hit = await cacheGetAny(key, TTL_NEARBY);
-  if (hit && hit.fresh) {
-    // 'Geen match' proberen we na een paar dagen opnieuw — een tijdelijke
-    // misser (of een net gefixte API-sleutel) herstelt zichzelf dan.
-    const d = hit.data;
-    if (!(d && d.rating == null && d.retryAfter && Date.now() > d.retryAfter)) return d;
-  }
+  if (hit && hit.fresh) return hit.data;
   if (!process.env.GOOGLE_PLACES_API_KEY) return null;
   if (!(await googleBudgetOk())) return null;
 
@@ -710,11 +705,9 @@ async function googleRating(name, lat, lng) {
     if (!res.ok) throw new Error(`Places ${res.status}`);
     const data = await res.json();
     const p = (data.places || [])[0];
-    // Ook 'geen match' cachen we (anders betalen we die opzoeking elke
-    // keer), maar met een kortere hertest-termijn van 3 dagen.
-    const out = (p && p.rating)
-      ? { rating: p.rating, count: p.userRatingCount || 0 }
-      : { rating: null, retryAfter: Date.now() + 3 * 24 * 3600 * 1000 };
+    // Ook 'geen match' cachen we 30 dagen: anders blijft een uitje zonder
+    // Google-vermelding elke keer opnieuw (betaald) opgezocht worden.
+    const out = (p && p.rating) ? { rating: p.rating, count: p.userRatingCount || 0 } : { rating: null };
     await cacheSet(key, out);
     return out;
   } catch (err) {
@@ -723,27 +716,70 @@ async function googleRating(name, lat, lng) {
   }
 }
 
-// Verrijkt de payload met sterren. Cache-hits zijn vrijwel gratis; per
-// verzoek doen we maximaal 40 nieuwe Google-opzoekingen (concurrentie 6)
-// — wat overblijft krijgt zijn sterren bij een volgend bezoek.
+// Verrijkt de payload met sterren — met precies evenveel Google-
+// opzoekingen als er getoonde locaties zónder verse cache zijn, en één
+// gebundelde database-vraag voor alle cache-hits (i.p.v. één per
+// locatie). Draait alleen op het moment dat iemand de pagina echt
+// bekijkt; voorladen en achtergrond-verversing doen géén opzoekingen.
 async function enrichWithRatings(payload) {
   if (!process.env.GOOGLE_PLACES_API_KEY) return payload;
   const pois = payload.categories.flatMap(c => c.pois)
     .filter(p => p.lat != null && p.lng != null);
-  let newLookups = 0;
-  for (let i = 0; i < pois.length; i += 6) {
-    const batch = pois.slice(i, i + 6);
-    if (newLookups >= 40) break;
-    await Promise.all(batch.map(async p => {
-      const cached = await cacheGetAny(`grating:v1:${p.name.toLowerCase()}:${p.lat.toFixed(2)}:${p.lng.toFixed(2)}`, TTL_NEARBY);
-      if (!(cached && cached.fresh)) newLookups++;
+  if (!pois.length) return payload;
+
+  const keyFor = p => `grating:v1:${p.name.toLowerCase()}:${p.lat.toFixed(2)}:${p.lng.toFixed(2)}`;
+
+  // Eén query voor alle rating-sleutels tegelijk; primet ook de memCache
+  // zodat googleRating() hieronder geen extra leesbeurten doet.
+  const wanted = new Map(pois.map(p => [keyFor(p), p]));
+  try {
+    const { rows } = await pool.query(
+      'SELECT key, data, fetched_at FROM geo_cache WHERE key = ANY($1)',
+      [[...wanted.keys()]]
+    );
+    for (const r of rows) {
+      memCache.set(r.key, { at: new Date(r.fetched_at).getTime(), data: r.data });
+    }
+  } catch (err) {
+    console.error('[gplaces] batch-lees mislukt:', err.message);
+  }
+
+  const need = [];
+  for (const [key, p] of wanted) {
+    const hit = memCache.get(key);
+    if (hit && Date.now() - hit.at < TTL_NEARBY) {
+      p.ratingChecked = true;
+      if (hit.data && hit.data.rating) {
+        p.rating = hit.data.rating;
+        p.ratingCount = hit.data.count || 0;
+      }
+    } else {
+      need.push(p);
+    }
+  }
+
+  for (let i = 0; i < need.length; i += 6) {
+    await Promise.all(need.slice(i, i + 6).map(async p => {
       const r = await googleRating(p.name, p.lat, p.lng);
-      if (r && r.rating) {
-        p.rating = r.rating;
-        p.ratingCount = r.count;
+      if (r) {
+        p.ratingChecked = true;
+        if (r.rating) {
+          p.rating = r.rating;
+          p.ratingCount = r.count;
+        }
       }
     }));
   }
+
+  // Crowd-validatie als laatste filter: een uitje waarvan Google
+  // bevéstigt dat het geen enkele review heeft, is het tonen niet waard.
+  // Fail-open: kon de opzoeking niet plaatsvinden (budget op, storing),
+  // dan blijft de locatie gewoon staan.
+  for (const cat of payload.categories) {
+    cat.pois = cat.pois.filter(p => p.rating || !p.ratingChecked);
+    for (const p of cat.pois) delete p.ratingChecked;
+  }
+  payload.categories = payload.categories.filter(c => c.pois.length);
   return payload;
 }
 
@@ -821,9 +857,9 @@ function prefetchNearby(lat, lng) {
     .then(hit => {
       if (usableRaw(hit) && hit.fresh) return null;
       console.log('[geo/prefetch] omgeving voorladen voor', lat.toFixed(2), lng.toFixed(2));
-      // Ook de sterren alvast warm cachen — dan is de eerste weergave compleet.
-      return fetchNearbyRaw(lat, lng)
-        .then(raw => enrichWithRatings(buildPayload(lat, lng, raw)));
+      // Alleen de ruwe omgevingsdata voorladen. Google-opzoekingen doen
+      // we uitsluitend voor pagina's die iemand écht bekijkt.
+      return fetchNearbyRawShared(lat, lng);
     })
     .catch(err => console.warn('[geo/prefetch] mislukt (geen probleem):', err.message));
 }

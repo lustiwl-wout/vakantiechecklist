@@ -1564,23 +1564,20 @@ async function renderOmgeving(id, epoch) {
         const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`;
         poiListEl.append(el('li', {},
           el('span', { class: 'poi-name' },
-            p.website
-              ? el('a', { href: p.website, target: '_blank', rel: 'noopener' }, p.name)
-              : p.name,
+            // De naam linkt naar Google Maps: daar staan reviews, foto's,
+            // openingstijden én de navigatie — nuttiger dan de eigen site.
+            el('a', {
+              href: mapsUrl,
+              target: '_blank',
+              rel: 'noopener',
+              title: `${p.name} openen in Google Maps`,
+            }, p.name),
             p.rating
               ? el('span', { class: 'poi-rating', title: `${p.ratingCount || 0} Google-beoordelingen` },
                   ` ⭐ ${p.rating.toFixed(1).replace('.', ',')}`,
                   p.ratingCount ? el('span', { class: 'muted' }, ` (${p.ratingCount.toLocaleString('nl-NL')})`) : null)
               : null),
           el('span', { class: 'poi-dist' }, `${p.distanceKm} km`),
-          el('a', {
-            class: 'btn btn-sm btn-ghost poi-nav',
-            href: mapsUrl,
-            target: '_blank',
-            rel: 'noopener',
-            title: `${p.name} openen in Google Maps`,
-            'aria-label': `${p.name} openen in Google Maps`,
-          }, 'Navigatie'),
           el('button', {
             class: 'btn btn-sm btn-ghost poi-dismiss',
             title: 'Overslaan — zoek een vervangende locatie',
