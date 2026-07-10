@@ -1241,23 +1241,43 @@ async function renderChecklist(id, epoch) {
       el('div', { class: 'head-actions no-print' },
         (() => {
           if (c.lat == null || c.lng == null) return null;
-          // De knop is altijd direct bruikbaar: de Omgeving-pagina vangt
-          // een koude cache zelf netjes op (laadtekst, database-cache,
-          // verouderde-data-fallback). Een uitgeschakelde knop die op een
-          // ready-rondje moet wachten oogt bij een koude Render-start
-          // onterecht 30-60 s kapot terwijl de cache er gewoon is.
-          // We stoken de cache wel alvast warm op de achtergrond.
-          api(`/api/geo/nearby/ready?lat=${c.lat}&lng=${c.lng}`)
-            .then(r => {
-              if (!r.ready) {
-                api(`/api/geo/nearby?lat=${c.lat}&lng=${c.lng}`).catch(() => {});
-              }
-            })
-            .catch(() => {});
-          return el('a', {
+          // De knop volgt de content-beschikbaarheid: pas klikbaar als er
+          // écht iets te tonen is. Dankzij de cache (die ook verouderde
+          // versies direct serveert) is dat vrijwel altijd meteen; alleen
+          // een gloednieuwe locatie moet eerst voorbereid worden — dan
+          // legt de knop uit waarom hij nog even wacht.
+          const btn = el('a', {
             href: `#/list/${c.id}/omgeving`,
             class: 'btn btn-sm',
+            'aria-disabled': 'true',
+            style: 'opacity: 0.5; pointer-events: none;',
+            title: 'Omgeving wordt voorbereid…',
           }, '🗺 Omgeving');
+          const activate = () => {
+            btn.removeAttribute('aria-disabled');
+            btn.removeAttribute('title');
+            btn.style.opacity = '';
+            btn.style.pointerEvents = '';
+          };
+          let attempts = 0;
+          const check = () => {
+            if (isStale(epoch)) return;
+            api(`/api/geo/nearby/ready?lat=${c.lat}&lng=${c.lng}`)
+              .then(r => {
+                if (isStale(epoch)) return;
+                if (r.ready) return activate();
+                // Nog geen content: nu klaarzetten en dán pas activeren.
+                return api(`/api/geo/nearby?lat=${c.lat}&lng=${c.lng}`)
+                  .then(() => { if (!isStale(epoch)) activate(); });
+              })
+              .catch(() => {
+                if (isStale(epoch)) return;
+                if (++attempts < 5) setTimeout(check, 15000);
+                else btn.title = 'Omgeving is nu niet beschikbaar — probeer het later';
+              });
+          };
+          check();
+          return btn;
         })(),
         el('a', { href: `#/list/${c.id}/edit`, class: 'btn btn-sm' }, 'Aanpassen'),
         el('button', {

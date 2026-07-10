@@ -555,8 +555,17 @@ async function fetchNearbyRaw(lat, lng) {
   return raw;
 }
 
+// Bruikbaar = het els-formaat klopt (elke qv ≥ 2 deelt dat formaat).
+// Een oude query-versie mist hooguit de nieuwste categorie-soorten en is
+// dus prima om DIRECT te tonen — verversen gebeurt op de achtergrond.
+// Zo veroorzaakt een versie-bump geen lange wachttijd meer bij de
+// eerstvolgende bezoeker.
 function usableRaw(cached) {
-  return !!(cached && cached.data && cached.data.qv === QUERY_VERSION && Array.isArray(cached.data.els));
+  return !!(cached && cached.data && Array.isArray(cached.data.els));
+}
+
+function currentQv(cached) {
+  return !!(cached && cached.data && cached.data.qv === QUERY_VERSION);
 }
 
 // Bouwt het advies-antwoord uit de (gecachte) ruwe elementen — hier
@@ -672,7 +681,12 @@ async function googleBudgetOk() {
 async function googleRating(name, lat, lng) {
   const key = `grating:v1:${name.toLowerCase()}:${lat.toFixed(2)}:${lng.toFixed(2)}`;
   const hit = await cacheGetAny(key, TTL_NEARBY);
-  if (hit && hit.fresh) return hit.data;
+  if (hit && hit.fresh) {
+    // 'Geen match' proberen we na een paar dagen opnieuw — een tijdelijke
+    // misser (of een net gefixte API-sleutel) herstelt zichzelf dan.
+    const d = hit.data;
+    if (!(d && d.rating == null && d.retryAfter && Date.now() > d.retryAfter)) return d;
+  }
   if (!process.env.GOOGLE_PLACES_API_KEY) return null;
   if (!(await googleBudgetOk())) return null;
 
@@ -696,8 +710,11 @@ async function googleRating(name, lat, lng) {
     if (!res.ok) throw new Error(`Places ${res.status}`);
     const data = await res.json();
     const p = (data.places || [])[0];
-    // Ook 'geen match' cachen we: anders betalen we die opzoeking elke keer.
-    const out = (p && p.rating) ? { rating: p.rating, count: p.userRatingCount || 0 } : { rating: null };
+    // Ook 'geen match' cachen we (anders betalen we die opzoeking elke
+    // keer), maar met een kortere hertest-termijn van 3 dagen.
+    const out = (p && p.rating)
+      ? { rating: p.rating, count: p.userRatingCount || 0 }
+      : { rating: null, retryAfter: Date.now() + 3 * 24 * 3600 * 1000 };
     await cacheSet(key, out);
     return out;
   } catch (err) {
@@ -730,14 +747,27 @@ async function enrichWithRatings(payload) {
   return payload;
 }
 
+// Eén ophaal-actie per locatie, hoeveel bezoekers er ook tegelijk wachten:
+// gelijktijdige aanvragen delen dezelfde promise in plaats van Overpass
+// dubbel te belasten (wat het IP-limiet juist uitlokt).
+const rawInFlight = new Map(); // key → Promise<raw>
+function fetchNearbyRawShared(lat, lng) {
+  const key = nearbyKey(lat, lng);
+  const existing = rawInFlight.get(key);
+  if (existing) return existing;
+  const p = fetchNearbyRaw(lat, lng).finally(() => rawInFlight.delete(key));
+  rawInFlight.set(key, p);
+  return p;
+}
+
 // Verse fetch op de achtergrond, zonder de aanvrager te laten wachten.
 let refreshInFlight = new Set();
 function backgroundRefresh(lat, lng) {
   const key = nearbyKey(lat, lng);
   if (refreshInFlight.has(key)) return;
   refreshInFlight.add(key);
-  console.log('[geo/cache] cache verlopen — automatische verversing voor', key);
-  fetchNearbyRaw(lat, lng)
+  console.log('[geo/cache] cache verouderd — automatische verversing voor', key);
+  fetchNearbyRawShared(lat, lng)
     .catch(err => console.warn('[geo/cache] achtergrond-verversing mislukt:', err.message))
     .finally(() => refreshInFlight.delete(key));
 }
@@ -749,9 +779,9 @@ router.get('/nearby/ready', async (req, res) => {
   if (!c) return res.status(400).json({ error: 'Ongeldige coördinaten' });
   const cached = await cacheGetAny(nearbyKey(c.lat, c.lng), TTL_NEARBY);
   const usable = usableRaw(cached);
-  // Verlopen maar bruikbaar telt als 'klaar' (we serveren de oude data
-  // direct) en start meteen de automatische verversing.
-  if (usable && !cached.fresh) backgroundRefresh(c.lat, c.lng);
+  // Verlopen of oudere query-versie maar bruikbaar telt als 'klaar'
+  // (we serveren die data direct) en start meteen de verversing.
+  if (usable && (!cached.fresh || !currentQv(cached))) backgroundRefresh(c.lat, c.lng);
   res.json({ ready: usable });
 });
 
@@ -763,17 +793,17 @@ router.get('/nearby', async (req, res) => {
   const cached = await cacheGetAny(nearbyKey(c.lat, c.lng), TTL_NEARBY);
   const usable = usableRaw(cached);
 
-  // Cache mag 30 dagen oud worden. Vers → direct serveren. Verlopen →
-  // óók direct serveren (geen wachttijd voor de gebruiker) en op de
-  // achtergrond automatisch volledig verversen. Alleen de
-  // Vernieuwen-knop (refresh=1) wacht op verse data.
+  // Cache mag 30 dagen oud worden. Vers → direct serveren. Verlopen of
+  // van een oudere query-versie → óók direct serveren (geen wachttijd
+  // voor de gebruiker) en op de achtergrond automatisch verversen.
+  // Alleen de Vernieuwen-knop (refresh=1) wacht op verse data.
   if (!refresh && usable) {
-    if (!cached.fresh) backgroundRefresh(c.lat, c.lng);
+    if (!cached.fresh || !currentQv(cached)) backgroundRefresh(c.lat, c.lng);
     return res.json(await enrichWithRatings(buildPayload(c.lat, c.lng, cached.data)));
   }
 
   try {
-    const raw = await fetchNearbyRaw(c.lat, c.lng);
+    const raw = await fetchNearbyRawShared(c.lat, c.lng);
     res.json(await enrichWithRatings(buildPayload(c.lat, c.lng, raw)));
   } catch (err) {
     console.error('[geo/nearby]', err.message);
