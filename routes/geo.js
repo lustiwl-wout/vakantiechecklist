@@ -782,6 +782,14 @@ async function enrichWithRatings(payload) {
   for (const cat of payload.categories) {
     cat.pois = cat.pois.filter(p => p.rating || !p.ratingChecked);
     for (const p of cat.pois) delete p.ratingChecked;
+    // Binnen de categorie: beste Google-score bovenaan; bij gelijke
+    // score wint het grootste aantal beoordelingen, daarna afstand.
+    // (De afstand-sortering vóór de verrijking bepaalt wélke ~20
+    // dichtstbijzijnde locaties meedoen; dit bepaalt hun volgorde.)
+    cat.pois.sort((a, b) =>
+      (b.rating || 0) - (a.rating || 0)
+      || (b.ratingCount || 0) - (a.ratingCount || 0)
+      || a.distanceKm - b.distanceKm);
   }
   payload.categories = payload.categories.filter(c => c.pois.length);
   return payload;
