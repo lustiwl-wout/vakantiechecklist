@@ -775,12 +775,15 @@ async function enrichWithRatings(payload) {
     }));
   }
 
-  // Crowd-validatie als laatste filter: een uitje waarvan Google
-  // bevéstigt dat het geen enkele review heeft, is het tonen niet waard.
-  // Fail-open: kon de opzoeking niet plaatsvinden (budget op, storing),
-  // dan blijft de locatie gewoon staan.
+  // Crowd-validatie als laatste filter: pas serieus vanaf een minimum
+  // aantal Google-reviews. Echte uitjes (ook kleine kinderboerderijen en
+  // bosbaden) halen dat ruim; een veentje met drie beoordelingen niet
+  // (Moordenaarsveen-klasse). Fail-open: kon de opzoeking niet
+  // plaatsvinden (budget op, storing), dan blijft de locatie staan.
+  const MIN_REVIEWS = 25;
   for (const cat of payload.categories) {
-    cat.pois = cat.pois.filter(p => p.rating || !p.ratingChecked);
+    cat.pois = cat.pois.filter(p =>
+      !p.ratingChecked || (p.rating && (p.ratingCount || 0) >= MIN_REVIEWS));
     for (const p of cat.pois) delete p.ratingChecked;
     // Binnen de categorie: beste Google-score bovenaan; bij gelijke
     // score wint het grootste aantal beoordelingen, daarna afstand.
