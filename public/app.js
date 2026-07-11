@@ -1457,7 +1457,6 @@ async function renderOmgeving(id, epoch) {
   if (isStale(epoch)) return;
 
   const c = data.checklist;
-  const destination = c.destination;
   const currentActivities = new Set(Array.isArray(c.activities) ? c.activities : []);
 
   clear(app);
@@ -1560,8 +1559,12 @@ async function renderOmgeving(id, epoch) {
         return;
       }
       for (const p of visible) {
-        const mapsQuery = encodeURIComponent([p.name, destination].filter(Boolean).join(', '));
-        const mapsUrl = `https://www.google.com/maps/search/?api=1&query=${mapsQuery}`;
+        // Zoek op naam, gericht op de eigen coördinaten van het uitje —
+        // niet op de vakantie-plaatsnaam: het uitje ligt vaak in een
+        // heel ander dorp ("Aqua Mundo, Zwiggelte" vindt niets).
+        const mapsUrl = (p.lat != null && p.lng != null)
+          ? `https://www.google.com/maps/search/${encodeURIComponent(p.name)}/@${p.lat},${p.lng},16z`
+          : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name)}`;
         poiListEl.append(el('li', {},
           el('span', { class: 'poi-name' },
             // De naam linkt naar Google Maps: daar staan reviews, foto's,
