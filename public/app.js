@@ -1230,6 +1230,22 @@ async function renderChecklist(id, epoch) {
     : '';
   const metaParts = [c.destination, dates].filter(Boolean);
 
+  // Alleen op de afdruk: een QR-code die deze lijst op de telefoon opent.
+  // Zo is het papier de brug naar digitaal afvinken — reeds afgevinkte
+  // items staan op de print ook al aangevinkt.
+  const printQr = (() => {
+    if (typeof qrcode !== 'function') return null;
+    try {
+      const qr = qrcode(0, 'M');
+      qr.addData(`${location.origin}/#/list/${c.id}`);
+      qr.make();
+      const box = el('div', { class: 'print-qr' });
+      box.innerHTML = qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true });
+      box.append(el('span', {}, 'Scan om digitaal af te vinken'));
+      return box;
+    } catch { return null; }
+  })();
+
   clear(app);
   app.append(
     el('a', { href: '#/', class: 'btn btn-sm btn-ghost no-print' }, '← Terug'),
@@ -1238,6 +1254,7 @@ async function renderChecklist(id, epoch) {
         el('h1', { class: 'print-title', style: 'margin-top: 8px' }, c.name),
         metaParts.length ? el('div', { class: 'checklist-meta' }, metaParts.join(' • ')) : null,
       ),
+      ...[printQr].filter(Boolean),
       el('div', { class: 'head-actions no-print' },
         (() => {
           if (c.lat == null || c.lng == null) return null;
