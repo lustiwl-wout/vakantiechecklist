@@ -695,10 +695,51 @@ function ratingKey(name, lat, lng, gtype) {
   return `grating:v2:${gtype || 'any'}:${name.toLowerCase()}:${lat.toFixed(2)}:${lng.toFixed(2)}`;
 }
 
+// Naam-verificatie van de Google-match. Het strikte type-filter voorkomt
+// matches op een ander sóórt plek, maar binnen het type springt tekst-
+// zoeken nog steeds naar de bekendste naamgenoot: "Museum GGZ Drenthe"
+// leverde het Drents Museum op (4,5 ★, 5.446 reviews — andermans sterren).
+// Eis: (vrijwel) elke betekenisvolle woord-token uit de OSM-naam komt in
+// de Google-naam terug. Extra woorden bij Google mogen ("Aqua Mundo" ⊂
+// "Aqua Mundo Center Parcs De Eemhof"); spellingsvarianten tellen via een
+// prefix-vergelijking ("Attractiepark" ~ "Attractie- & Vakantiepark").
+const NAME_STOPWORDS = new Set(['de', 'het', 'een', 'en', 'van', 'der', 'den', 'ter', 'ten', 't', 's', 'aan', 'bij', 'in', 'op', 'the', 'of']);
+function nameTokens(s) {
+  return String(s || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .filter(w => w && !NAME_STOPWORDS.has(w));
+}
+function namesMatch(poiName, gname) {
+  if (!gname) return true; // geen naam meegekregen: niet blokkeren
+  const a = nameTokens(poiName);
+  const b = nameTokens(gname);
+  if (!a.length || !b.length) return true;
+  const aj = a.join(' ');
+  const bj = b.join(' ');
+  if (bj.includes(aj) || aj.includes(bj)) return true;
+  const matched = a.filter(t => b.some(u =>
+    t === u || (t.length >= 5 && u.length >= 5 && (t.startsWith(u) || u.startsWith(t))))).length;
+  return matched / a.length >= 0.65;
+}
+
+// Zet gecachte/opgehaalde rating-data om naar wat de payload mag tonen:
+// een match op de verkeerde plek telt als 'geen beoordeling', waarna het
+// minimum-reviews-filter de locatie verbergt. De controle draait bij het
+// lézen, dus ook al foutief gecachte matches worden hiermee geneutraliseerd.
+function verifiedRating(name, data) {
+  if (data && data.rating && !namesMatch(name, data.gname)) {
+    console.log(`[gplaces] "${name}" ≠ Google-match "${data.gname}" — sterren genegeerd`);
+    return { rating: null };
+  }
+  return data;
+}
+
 async function googleRating(name, lat, lng, gtype) {
   const key = ratingKey(name, lat, lng, gtype);
   const hit = await cacheGetAny(key, TTL_NEARBY);
-  if (hit && hit.fresh) return hit.data;
+  if (hit && hit.fresh) return verifiedRating(name, hit.data);
   if (!process.env.GOOGLE_PLACES_API_KEY) return null;
   if (!(await googleBudgetOk())) return null;
 
@@ -737,8 +778,11 @@ async function googleRating(name, lat, lng, gtype) {
     if (gname && gname.toLowerCase() !== name.toLowerCase()) {
       console.log(`[gplaces] "${name}" → Google-match "${gname}"${gtype ? ` (type ${gtype})` : ''}`);
     }
+    // De ruwe uitkomst (mét gname) gaat de cache in; teruggeven doen we
+    // de geverifieerde versie — zo blijft de naamregel achteraf bij te
+    // stellen zonder nieuwe (betaalde) opzoekingen.
     await cacheSet(key, out);
-    return out;
+    return verifiedRating(name, out);
   } catch (err) {
     console.warn('[gplaces]', name, '-', err.message);
     return null;
@@ -778,9 +822,10 @@ async function enrichWithRatings(payload) {
     const hit = memCache.get(key);
     if (hit && Date.now() - hit.at < TTL_NEARBY) {
       p.ratingChecked = true;
-      if (hit.data && hit.data.rating) {
-        p.rating = hit.data.rating;
-        p.ratingCount = hit.data.count || 0;
+      const d = verifiedRating(p.name, hit.data);
+      if (d && d.rating) {
+        p.rating = d.rating;
+        p.ratingCount = d.count || 0;
       }
     } else {
       need.push({ p, gtype });
