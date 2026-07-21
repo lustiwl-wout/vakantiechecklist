@@ -199,13 +199,20 @@ function createCountryPlaceDedupeKey(country, place) {
 // 'Zet op mijn programma' de paklijst kan bijwerken. Elke categorie heeft
 // een eigen zoekstraal en resultaat-cap, zodat dichte categorieën
 // (restaurants!) de rest niet verdringen.
+// gtype: het Google Places-type waarop de sterren-opzoeking strikt mag
+// matchen. Zonder gtype zoekt Google vrij op naam — en dan matcht
+// "Museum GGZ Drenthe" op de zorginstelling GGZ Drenthe (honderden
+// reviews) in plaats van op het miniatuurmuseum, en glipt zo'n plek
+// langs de reviews-drempel. Alleen gezet waar Googles typering
+// betrouwbaar is; bosbaden (swimming_pool vs water_park) en
+// kinderboerderijen typeert Google te wisselend voor een strikt filter.
 const POI_CATEGORIES = [
-  { key: 'themepark', selectors: ['["tourism"="theme_park"]'], radiusKm: 35, cap: 80, label: 'Pretparken', ages: 'kinderen en tieners', activity: 'themepark' },
-  { key: 'zoo', selectors: ['["tourism"="zoo"]'], radiusKm: 35, cap: 120, label: 'Dierentuinen', ages: 'alle leeftijden', activity: 'daytrip' },
+  { key: 'themepark', selectors: ['["tourism"="theme_park"]'], radiusKm: 35, cap: 80, label: 'Pretparken', ages: 'kinderen en tieners', activity: 'themepark', gtype: 'amusement_park' },
+  { key: 'zoo', selectors: ['["tourism"="zoo"]'], radiusKm: 35, cap: 120, label: 'Dierentuinen', ages: 'alle leeftijden', activity: 'daytrip', gtype: 'zoo' },
   // Kinderboerderijen zijn een lokaal uitje (kleinere straal) en horen
   // niet tussen de dierentuinen.
   { key: 'pettingzoo', selectors: ['["zoo"="petting_zoo"]'], radiusKm: 15, cap: 60, label: 'Kinderboerderijen', ages: 'jonge kinderen', activity: 'daytrip' },
-  { key: 'aquarium', selectors: ['["tourism"="aquarium"]'], radiusKm: 35, cap: 40, label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip' },
+  { key: 'aquarium', selectors: ['["tourism"="aquarium"]'], radiusKm: 35, cap: 40, label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip', gtype: 'aquarium' },
   // Bosbaden/openluchtzwembaden staan in OSM zelden als water_park maar
   // als swimming_pool of sports_centre+swimming. Die tags zijn ruizig
   // (elk privé-bassin), maar de naam-eis in de query en de bekendheids-
@@ -217,7 +224,7 @@ const POI_CATEGORIES = [
   // binnen de bbox en is dus betaalbaar.
   { key: 'waterpark', selectors: ['["leisure"="water_park"]', '["leisure"="swimming_pool"]', '["leisure"="sports_centre"]["sport"="swimming"]', '["leisure"="sports_centre"]["name"~"zwembad|bosbad|zwemparadijs",i]'], radiusKm: 35, cap: 100, label: 'Zwembaden & waterparken', ages: 'alle leeftijden', activity: 'pool' },
   { key: 'nature', selectors: ['["boundary"="national_park"]', '["leisure"="nature_reserve"]'], radiusKm: 35, cap: 80, label: 'Natuur & wandelgebieden', ages: 'alle leeftijden', activity: 'hiking' },
-  { key: 'museum', selectors: ['["tourism"="museum"]'], radiusKm: 25, cap: 100, label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural' },
+  { key: 'museum', selectors: ['["tourism"="museum"]'], radiusKm: 25, cap: 100, label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural', gtype: 'museum' },
   { key: 'attraction', selectors: ['["tourism"="attraction"]'], radiusKm: 20, cap: 80, label: 'Bezienswaardigheden & uitjes', ages: 'alle leeftijden', activity: 'daytrip' },
   // Zwemplassen dragen zelden natural=beach: recreatieplassen staan als
   // leisure=beach_resort (dagstrand met voorzieningen) of
@@ -226,7 +233,7 @@ const POI_CATEGORIES = [
   // mee als er een Wikipedia-artikel aan hangt: dat onderscheidt een
   // begrip van elke willekeurige vijver of sloot.
   { key: 'beach', selectors: ['["natural"="beach"]', '["leisure"="beach_resort"]', '["leisure"="swimming_area"]', '["natural"="water"]["wikipedia"]'], radiusKm: 25, cap: 40, label: 'Stranden & zwemplassen', ages: 'alle leeftijden', activity: 'beach' },
-  { key: 'restaurant', selectors: ['["amenity"="restaurant"]'], radiusKm: 8, cap: 40, label: 'Restaurants', ages: 'alle leeftijden', activity: 'nightlife' },
+  { key: 'restaurant', selectors: ['["amenity"="restaurant"]'], radiusKm: 8, cap: 40, label: 'Restaurants', ages: 'alle leeftijden', activity: 'nightlife', gtype: 'restaurant' },
 ];
 
 function buildOverpassQuery(lat, lng) {
@@ -682,8 +689,14 @@ async function googleBudgetOk() {
   }
 }
 
-async function googleRating(name, lat, lng) {
-  const key = `grating:v1:${name.toLowerCase()}:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+// Cachesleutel voor één sterren-opzoeking. v2: het type-filter zit in de
+// sleutel, zodat oude type-loze matches (de GGZ-klasse) vanzelf uitspoelen.
+function ratingKey(name, lat, lng, gtype) {
+  return `grating:v2:${gtype || 'any'}:${name.toLowerCase()}:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+}
+
+async function googleRating(name, lat, lng, gtype) {
+  const key = ratingKey(name, lat, lng, gtype);
   const hit = await cacheGetAny(key, TTL_NEARBY);
   if (hit && hit.fresh) return hit.data;
   if (!process.env.GOOGLE_PLACES_API_KEY) return null;
@@ -696,10 +709,16 @@ async function googleRating(name, lat, lng) {
         'Content-Type': 'application/json',
         'X-Goog-Api-Key': process.env.GOOGLE_PLACES_API_KEY,
         // FieldMask beperkt tot wat we tonen — bepaalt ook het tarief.
-        'X-Goog-FieldMask': 'places.rating,places.userRatingCount',
+        // displayName valt binnen dezelfde tariefklasse en maakt in de
+        // logs zichtbaar wélke plek Google gematcht heeft.
+        'X-Goog-FieldMask': 'places.displayName,places.rating,places.userRatingCount',
       },
       body: JSON.stringify({
         textQuery: name,
+        // Strikt type-filter waar de categorie dat toelaat: de zoekopdracht
+        // "Museum GGZ Drenthe" mag dan alleen nog op een múseum matchen,
+        // niet op de gelijknamige zorginstelling met honderden reviews.
+        ...(gtype ? { includedType: gtype, strictTypeFiltering: true } : {}),
         locationBias: { circle: { center: { latitude: lat, longitude: lng }, radius: 3000 } },
         maxResultCount: 1,
         languageCode: 'nl',
@@ -711,7 +730,13 @@ async function googleRating(name, lat, lng) {
     const p = (data.places || [])[0];
     // Ook 'geen match' cachen we 30 dagen: anders blijft een uitje zonder
     // Google-vermelding elke keer opnieuw (betaald) opgezocht worden.
-    const out = (p && p.rating) ? { rating: p.rating, count: p.userRatingCount || 0 } : { rating: null };
+    const gname = p && p.displayName && p.displayName.text;
+    const out = (p && p.rating)
+      ? { rating: p.rating, count: p.userRatingCount || 0, ...(gname ? { gname } : {}) }
+      : { rating: null };
+    if (gname && gname.toLowerCase() !== name.toLowerCase()) {
+      console.log(`[gplaces] "${name}" → Google-match "${gname}"${gtype ? ` (type ${gtype})` : ''}`);
+    }
     await cacheSet(key, out);
     return out;
   } catch (err) {
@@ -727,15 +752,15 @@ async function googleRating(name, lat, lng) {
 // bekijkt; voorladen en achtergrond-verversing doen géén opzoekingen.
 async function enrichWithRatings(payload) {
   if (!process.env.GOOGLE_PLACES_API_KEY) return payload;
-  const pois = payload.categories.flatMap(c => c.pois)
-    .filter(p => p.lat != null && p.lng != null);
+  const gtypeByCat = Object.fromEntries(POI_CATEGORIES.map(x => [x.key, x.gtype || null]));
+  const pois = payload.categories.flatMap(c =>
+    c.pois.map(p => ({ p, gtype: gtypeByCat[c.key] || null }))
+  ).filter(e => e.p.lat != null && e.p.lng != null);
   if (!pois.length) return payload;
-
-  const keyFor = p => `grating:v1:${p.name.toLowerCase()}:${p.lat.toFixed(2)}:${p.lng.toFixed(2)}`;
 
   // Eén query voor alle rating-sleutels tegelijk; primet ook de memCache
   // zodat googleRating() hieronder geen extra leesbeurten doet.
-  const wanted = new Map(pois.map(p => [keyFor(p), p]));
+  const wanted = new Map(pois.map(e => [ratingKey(e.p.name, e.p.lat, e.p.lng, e.gtype), e]));
   try {
     const { rows } = await pool.query(
       'SELECT key, data, fetched_at FROM geo_cache WHERE key = ANY($1)',
@@ -749,7 +774,7 @@ async function enrichWithRatings(payload) {
   }
 
   const need = [];
-  for (const [key, p] of wanted) {
+  for (const [key, { p, gtype }] of wanted) {
     const hit = memCache.get(key);
     if (hit && Date.now() - hit.at < TTL_NEARBY) {
       p.ratingChecked = true;
@@ -758,13 +783,13 @@ async function enrichWithRatings(payload) {
         p.ratingCount = hit.data.count || 0;
       }
     } else {
-      need.push(p);
+      need.push({ p, gtype });
     }
   }
 
   for (let i = 0; i < need.length; i += 6) {
-    await Promise.all(need.slice(i, i + 6).map(async p => {
-      const r = await googleRating(p.name, p.lat, p.lng);
+    await Promise.all(need.slice(i, i + 6).map(async ({ p, gtype }) => {
+      const r = await googleRating(p.name, p.lat, p.lng, gtype);
       if (r) {
         p.ratingChecked = true;
         if (r.rating) {
