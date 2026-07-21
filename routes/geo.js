@@ -826,6 +826,10 @@ async function enrichWithRatings(payload) {
       if (d && d.rating) {
         p.rating = d.rating;
         p.ratingCount = d.count || 0;
+        // De geverifieerde Google-naam is vaak de officiële ("WILDLANDS
+        // Adventure Zoo Emmen") — de frontend toont die en zoekt er op
+        // in Maps; p.name blijft de OSM-naam (sleutel voor wegklikken).
+        if (d.gname) p.gname = d.gname;
       }
     } else {
       need.push({ p, gtype });
@@ -840,6 +844,7 @@ async function enrichWithRatings(payload) {
         if (r.rating) {
           p.rating = r.rating;
           p.ratingCount = r.count;
+          if (r.gname) p.gname = r.gname;
         }
       }
     }));

@@ -1576,12 +1576,16 @@ async function renderOmgeving(id, epoch) {
         return;
       }
       for (const p of visible) {
+        // Toon de geverifieerde Google-naam als die er is (vaak de
+        // officiële: "WILDLANDS Adventure Zoo Emmen"); p.name blijft de
+        // OSM-naam en is de sleutel waarop wegklikken onthouden wordt.
+        const shownName = p.gname || p.name;
         // Zoek op naam, gericht op de eigen coördinaten van het uitje —
         // niet op de vakantie-plaatsnaam: het uitje ligt vaak in een
         // heel ander dorp ("Aqua Mundo, Zwiggelte" vindt niets).
         const mapsUrl = (p.lat != null && p.lng != null)
-          ? `https://www.google.com/maps/search/${encodeURIComponent(p.name)}/@${p.lat},${p.lng},16z`
-          : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(p.name)}`;
+          ? `https://www.google.com/maps/search/${encodeURIComponent(shownName)}/@${p.lat},${p.lng},16z`
+          : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(shownName)}`;
         poiListEl.append(el('li', {},
           el('span', { class: 'poi-name' },
             // De naam linkt naar Google Maps: daar staan reviews, foto's,
@@ -1590,8 +1594,8 @@ async function renderOmgeving(id, epoch) {
               href: mapsUrl,
               target: '_blank',
               rel: 'noopener',
-              title: `${p.name} openen in Google Maps`,
-            }, p.name),
+              title: `${shownName} openen in Google Maps`,
+            }, shownName),
             p.rating
               ? el('span', { class: 'poi-rating', title: `${p.ratingCount || 0} Google-beoordelingen` },
                   ` ⭐ ${p.rating.toFixed(1).replace('.', ',')}`,
@@ -1601,7 +1605,7 @@ async function renderOmgeving(id, epoch) {
           el('button', {
             class: 'btn btn-sm btn-ghost poi-dismiss',
             title: 'Overslaan — zoek een vervangende locatie',
-            'aria-label': `${p.name} overslaan`,
+            'aria-label': `${shownName} overslaan`,
             onclick: () => {
               dismissed.add(p.name);
               saveDismissed();
