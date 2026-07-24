@@ -554,6 +554,25 @@ function nearbyKey(lat, lng) {
   return `nearby:raw:${lat.toFixed(2)}:${lng.toFixed(2)}`;
 }
 
+// Al het zware Overpass-werk in een rij: máx één omgevings-zoektocht
+// tegelijk vanaf dit IP. Parallel stapelen (meerdere locaties plus de
+// verversingen na een versie-bump) lokte 429's en timeouts uit — de
+// publieke servers wegen belasting per IP, en tien gelijktijdige
+// queries maken elkaar alleen maar langzamer.
+let overpassQueue = Promise.resolve();
+function queuedOverpass(fn) {
+  const run = overpassQueue.then(fn, fn);
+  // De rij mag nooit stuklopen op een mislukte voorganger.
+  overpassQueue = run.catch(() => {});
+  return run;
+}
+
+// Na een mislukte poging even niets voor deze locatie: de frontend
+// pollt elke 15 s en zou anders telkens een nieuwe (kansloze) storm
+// van drie mirrors × volledig + lite ontketenen.
+const FAIL_COOLDOWN_MS = 2 * 60 * 1000;
+const lastFail = new Map(); // nearbyKey → timestamp
+
 // Haalt de ruwe omgevingsdata op bij Overpass en cachet die 30 dagen.
 // We bewaren bewust de ONGEFILTERDE elementen: zo profiteren
 // filter-verbeteringen direct van de bestaande cache in plaats van
@@ -562,6 +581,10 @@ function nearbyKey(lat, lng) {
 // wachten dan een gebruiker die naar een spinner kijkt — drukke Overpass-
 // servers halen het dan vaak alsnog.
 async function fetchNearbyRaw(lat, lng, opts = {}) {
+  return queuedOverpass(() => fetchNearbyRawNow(lat, lng, opts));
+}
+
+async function fetchNearbyRawNow(lat, lng, opts = {}) {
   let data;
   let partial = false;
   try {
@@ -950,7 +973,16 @@ function fetchNearbyRawShared(lat, lng, opts = {}) {
   const key = nearbyKey(lat, lng);
   const existing = rawInFlight.get(key);
   if (existing) return existing;
-  const p = fetchNearbyRaw(lat, lng, opts).finally(() => rawInFlight.delete(key));
+  // Afkoelperiode na een mislukking: niet elke 15 s dezelfde kansloze
+  // storm van mirrors ontketenen.
+  const failedAt = lastFail.get(key);
+  if (failedAt && Date.now() - failedAt < FAIL_COOLDOWN_MS) {
+    return Promise.reject(new Error('De kaartservers hebben het druk — over een paar minuten proberen we het automatisch opnieuw'));
+  }
+  const p = fetchNearbyRaw(lat, lng, opts)
+    .then(raw => { lastFail.delete(key); return raw; })
+    .catch(err => { lastFail.set(key, Date.now()); throw err; })
+    .finally(() => rawInFlight.delete(key));
   rawInFlight.set(key, p);
   return p;
 }
