@@ -364,20 +364,24 @@ function updateNeighboursLater(lat, lng, attempt = 1) {
 // dus soorten mist. Weergave-/filterwijzigingen draaien bij het lezen.
 const PLACES_VERSION = 2; // v2: primaryType erbij (accommodatie-filter)
 
-// Accommodaties zijn geen uitjes, maar duiken wel op in de resultaten:
-// een boerderijcamping met dieren telt bij Google soms als (kinder-)
-// dierentuin (Hoeve Sonneclaer-geval). Googles eigen primaire type is
-// het betrouwbaarste signaal; de naamcheck vangt de rest en werkt ook
-// op al gecachte data zonder primaryType.
-const LODGING_PRIMARY_TYPES = new Set([
+// Sommige bedrijven zijn geen uitje maar duiken wel op in de
+// resultaten: een boerderijcamping met dieren telt bij Google soms als
+// (kinder)dierentuin (Hoeve Sonneclaer), een dierenpension ook (Kampus
+// Dierenhotel). Googles eigen primaire type is het betrouwbaarste
+// signaal; de naamcheck vangt de rest en werkt ook op al gecachte data
+// zonder primaryType.
+const EXCLUDED_PRIMARY_TYPES = new Set([
+  // accommodaties
   'campground', 'camping_cabin', 'rv_park', 'hotel', 'motel', 'resort_hotel',
   'extended_stay_hotel', 'bed_and_breakfast', 'guest_house', 'hostel',
   'farmstay', 'cottage', 'private_guest_room', 'inn', 'lodging',
+  // huisdier-diensten
+  'veterinary_care', 'pet_store', 'pet_boarding_service', 'dog_trainer',
 ]);
-const LODGING_NAME_RE = /\b(camping|kamperen|minicamping|boerderijcamping|groepsaccommodatie|bed\s*&\s*breakfast|b&b|hostel)\b/i;
-function isLodgingPlace(p) {
-  if (p.pt && LODGING_PRIMARY_TYPES.has(p.pt)) return true;
-  return LODGING_NAME_RE.test(p.name);
+const EXCLUDED_NAME_RE = /\b(camping|kamperen|minicamping|boerderijcamping|groepsaccommodatie|bed\s*&\s*breakfast|b&b|hostel|dierenhotel|dierenpension|hondenpension|kattenpension|dierenasiel|dierenkliniek|dierenarts|trimsalon|hondenschool)\b/i;
+function isExcludedPlace(p) {
+  if (p.pt && EXCLUDED_PRIMARY_TYPES.has(p.pt)) return true;
+  return EXCLUDED_NAME_RE.test(p.name);
 }
 
 function nearbyKey(lat, lng) {
@@ -447,7 +451,7 @@ function currentVersion(cached) {
 function buildPayload(lat, lng, raw) {
   const categories = PLACES_CATEGORIES.map(def => {
     const pois = (raw.cats[def.key] || [])
-      .filter(p => !isLodgingPlace(p))
+      .filter(p => !isExcludedPlace(p))
       .map(p => ({
         name: p.name,
         lat: p.la,
@@ -620,7 +624,7 @@ router.get('/debug', async (req, res) => {
         verdict: {
           genoegReviews: (p.count || 0) >= MIN_REVIEWS,
           minReviews: MIN_REVIEWS,
-          accommodatie: isLodgingPlace(p),
+          uitgesloten: isExcludedPlace(p),
         },
       };
     });
