@@ -1101,11 +1101,12 @@ async function renderChecklist(id, epoch) {
     if (!li || li.querySelector('.item-editor')) return;
 
     const textIn = el('input', { type: 'text', value: item.text, maxlength: '200' });
-    const travSel = el('select', {},
-      el('option', { value: '', selected: !item.traveler }, 'Gedeeld'),
-      ...allTravelerNames().map(n =>
-        el('option', { value: n, selected: item.traveler === n }, n)),
-    );
+    // Vrij invulveld met suggesties, net als bij toevoegen: een nieuwe
+    // naam maakt de reiziger aan. Leeg = gedeeld.
+    const travSel = el('input', {
+      type: 'text', list: travListId, value: item.traveler || '',
+      placeholder: 'Gedeeld', title: 'Kies een reiziger of typ een nieuwe naam. Leeg = gedeeld.',
+    });
     // Zelfde vrije categorie-invoer als het toevoeg-formulier: kies uit
     // wat er is, of typ een nieuwe.
     const catSel = el('input', {
@@ -1130,13 +1131,15 @@ async function renderChecklist(id, epoch) {
                 method: 'PATCH',
                 body: {
                   text: textIn.value.trim() || item.text,
-                  traveler: travSel.value || null,
+                  traveler: travSel.value.trim() || null,
                   category: catSel.value.trim() || 'Overig',
                 },
               });
+              if (travSel.value.trim()) await ensureTraveler(travSel.value.trim());
               Object.assign(item, res.item);
               paintItems();
               paintProgress();
+              refreshTabs();
             } catch (err) {
               e.target.disabled = false;
               toast(err.message);
@@ -1191,10 +1194,36 @@ async function renderChecklist(id, epoch) {
     type: 'text', list: catListId, 'aria-label': 'Categorie', class: 'cat-input',
     placeholder: 'Categorie', title: 'Kies een categorie of typ een nieuwe',
   });
-  const newItemTrav = el('select', { 'aria-label': 'Voor wie', title: 'Voor wie?' },
-    el('option', { value: '' }, 'Gedeeld'),
-    ...allTravelerNames().map(n => el('option', { value: n }, n)),
-  );
+  // 'Voor wie' werkt net als de categorie: vrij tekstveld met suggesties.
+  // Typ je een naam die nog niet bestaat, dan wordt die reiziger
+  // aangemaakt. Leeg laten = gedeeld item.
+  const travListId = `travlist-${c.id}`;
+  const travDatalist = el('datalist', { id: travListId });
+  const newItemTrav = el('input', {
+    type: 'text', list: travListId, 'aria-label': 'Voor wie', class: 'cat-input',
+    placeholder: 'Voor wie?', title: 'Kies een reiziger of typ een nieuwe naam. Leeg = gedeeld.',
+  });
+
+  function paintTravelerOptions() {
+    clear(travDatalist);
+    for (const n of allTravelerNames()) travDatalist.append(el('option', { value: n }));
+  }
+  paintTravelerOptions();
+
+  // Onbekende reizigersnaam? Dan bestaat die reiziger vanaf nu — hij komt
+  // ook in het 👥-overzicht en (zonder leeftijd) in Automatisch vullen.
+  async function ensureTraveler(name) {
+    if (!name) return;
+    if (allTravelerNames().some(n => n.toLowerCase() === name.toLowerCase())) return;
+    const list = (Array.isArray(c.travelers) ? c.travelers : [])
+      .filter(t => t && (t.name || t.birthdate || t.category || t.age != null));
+    list.push({ name });
+    try {
+      await api(`/api/checklists/${c.id}`, { method: 'PATCH', body: { travelers: list } });
+      c.travelers = list;
+      paintTravelerOptions();
+    } catch { /* de naam staat op het item; de reiziger volgt anders later */ }
+  }
 
   function paintCategoryOptions() {
     const used = [...new Set(items.map(i => i.category).filter(Boolean))];
@@ -1215,22 +1244,23 @@ async function renderChecklist(id, epoch) {
       if (!text) return;
       const category = newItemCat.value.trim() || 'Overig';
       const quantity = Math.max(1, Math.min(99, Number(newItemQty.value) || 1));
-      const traveler = newItemTrav.value || undefined;
+      const traveler = newItemTrav.value.trim() || undefined;
       try {
         const res = await api(`/api/checklists/${c.id}/items`, {
           method: 'POST', body: { text, category, quantity, traveler },
         });
+        if (traveler) await ensureTraveler(traveler);
         items.push(res.item);
         newItemIn.value = '';
         newItemQty.value = '1';
-        lastChosenCategory = category;
         paintCategoryOptions();
         paintItems();
         paintProgress();
+        refreshTabs();
       } catch (err) { toast(err.message); }
     },
   },
-    newItemIn, newItemQty, newItemTrav, newItemCat, catDatalist,
+    newItemIn, newItemQty, newItemTrav, newItemCat, travDatalist, catDatalist,
     el('button', { type: 'submit', class: 'btn btn-primary' }, 'Toevoegen')
   );
 
@@ -1256,15 +1286,72 @@ async function renderChecklist(id, epoch) {
     } catch { return null; }
   })();
 
+  // Reizigers-tabs in een vaste houder, zodat ze ook ná het renderen
+  // bijgewerkt kunnen worden (bv. als een item een nieuwe naam meebrengt).
+  const tabsSlot = el('div', {});
+  function refreshTabs() {
+    clear(tabsSlot);
+    const t = travelerTabs();
+    if (t) tabsSlot.append(t);
+  }
+  refreshTabs();
+
   // Reizigers beheren zonder Automatisch vullen: alleen een naam is
   // genoeg om items aan een persoon te kunnen koppelen. Leeftijden zijn
   // pas relevant voor de generator — geboortedatum of leeftijdscategorie
-  // van bestaande reizigers blijft hier onaangeroerd.
+  // van bestaande reizigers blijft hier onaangeroerd. Gezinsleden voeg je
+  // met één klik toe (die brengen hun geboortedatum wél stilletjes mee).
   const travelersCard = (() => {
-    const local = (Array.isArray(c.travelers) ? c.travelers : [])
-      .filter(t => t && (t.name || t.birthdate || t.category || t.age != null))
-      .map(t => ({ ...t }));
+    let local = [];
     const listEl = el('div', {});
+    const famBox = el('div', { style: 'margin-top: 8px' });
+    let famMembers = null; // null = nog niet geladen
+
+    function fromChecklist() {
+      local = (Array.isArray(c.travelers) ? c.travelers : [])
+        .filter(t => t && (t.name || t.birthdate || t.category || t.age != null))
+        .map(t => ({ ...t }));
+    }
+    fromChecklist();
+
+    function paintFam() {
+      clear(famBox);
+      if (!Array.isArray(famMembers)) return;
+      if (!famMembers.length) {
+        famBox.append(el('span', { class: 'muted' },
+          'Tip: sla je gezin één keer op, dan staat het hier klaar. ',
+          el('a', { href: '#/gezin' }, 'Beheer je gezin →')));
+        return;
+      }
+      const haveIds = new Set(local.map(t => t.memberId).filter(v => v != null));
+      const haveNames = new Set(local.map(t => (t.name || '').trim().toLowerCase()).filter(Boolean));
+      const missing = famMembers.filter(m =>
+        !haveIds.has(m.id) && !haveNames.has(m.name.trim().toLowerCase()));
+      if (!missing.length) {
+        famBox.append(el('span', { class: 'muted' }, 'Heel je gezin reist al mee.'));
+        return;
+      }
+      famBox.append(el('span', { class: 'muted' }, 'Uit je gezin: '));
+      for (const m of missing) {
+        famBox.append(el('button', {
+          type: 'button', class: 'btn btn-sm',
+          style: 'margin: 2px 4px 2px 0',
+          onclick: () => {
+            local.push({ memberId: m.id, name: m.name, birthdate: isoDateOnly(m.birthdate) });
+            paintLocal();
+          },
+        }, `+ ${m.name}`));
+      }
+    }
+
+    async function loadFamily() {
+      if (famMembers !== null) return;
+      try {
+        famMembers = await getFamily();
+      } catch { famMembers = []; }
+      paintFam();
+    }
+
     function paintLocal() {
       clear(listEl);
       local.forEach((t, i) => {
@@ -1280,14 +1367,17 @@ async function renderChecklist(id, epoch) {
           }, '✕'),
         ));
       });
+      paintFam();
     }
     paintLocal();
+
     const box = el('div', { class: 'card no-print', hidden: true },
       el('h2', { style: 'margin-top: 0' }, 'Reizigers'),
       el('p', { class: 'muted', style: 'margin-top: 0' },
         'Alleen een naam is genoeg — dan kun je items aan een persoon koppelen. ',
         'Leeftijden doen er pas toe bij Automatisch vullen.'),
       listEl,
+      famBox,
       el('div', { class: 'actions' },
         el('button', {
           class: 'btn btn-sm',
@@ -1311,6 +1401,14 @@ async function renderChecklist(id, epoch) {
         }, 'Opslaan'),
       ),
     );
+    // Bij openen: verse stand van de checklist (er kan intussen een
+    // reiziger bijgekomen zijn via het item-formulier) + gezin laden.
+    box.refreshAndShow = () => {
+      fromChecklist();
+      paintLocal();
+      loadFamily();
+      box.hidden = false;
+    };
     return box;
   })();
 
@@ -1376,8 +1474,12 @@ async function renderChecklist(id, epoch) {
           class: 'btn btn-sm',
           title: 'Reizigers toevoegen of verwijderen — alleen een naam is nodig',
           onclick: () => {
-            travelersCard.hidden = !travelersCard.hidden;
-            if (!travelersCard.hidden) travelersCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            if (travelersCard.hidden) {
+              travelersCard.refreshAndShow();
+              travelersCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            } else {
+              travelersCard.hidden = true;
+            }
           },
         }, '👥 Reizigers'),
         el('a', { href: `#/list/${c.id}/vullen`, class: 'btn btn-sm' }, '✨ Automatisch vullen'),
@@ -1423,8 +1525,7 @@ async function renderChecklist(id, epoch) {
       progressLabel,
     ),
     travelersCard,
-    // travelerTabs() kan null zijn; append(null) rendert 'null' als tekst.
-    ...[travelerTabs()].filter(Boolean),
+    tabsSlot,
     addForm,
     itemsContainer,
   );
