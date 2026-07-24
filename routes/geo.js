@@ -382,8 +382,12 @@ const EXCLUDED_PRIMARY_TYPES = new Set([
   'farmstay', 'cottage', 'private_guest_room', 'inn', 'lodging',
   // huisdier-diensten
   'veterinary_care', 'pet_store', 'pet_boarding_service', 'dog_trainer',
+  // winkels: een galerie die tuinbeelden verkoopt is een winkel, geen
+  // museum (Harwi-geval)
+  'garden_center', 'home_goods_store', 'furniture_store',
+  'home_improvement_store', 'gift_shop', 'store',
 ]);
-const EXCLUDED_NAME_RE = /\b(camping|kamperen|minicamping|boerderijcamping|groepsaccommodatie|bed\s*&\s*breakfast|b&b|hostel|dierenhotel|dierenpension|hondenpension|kattenpension|dierenasiel|dierenkliniek|dierenarts|trimsalon|hondenschool)\b/i;
+const EXCLUDED_NAME_RE = /\b(camping|kamperen|minicamping|boerderijcamping|groepsaccommodatie|bed\s*&\s*breakfast|b&b|hostel|dierenhotel|dierenpension|hondenpension|kattenpension|dierenasiel|dierenkliniek|dierenarts|trimsalon|hondenschool)\b|tuinbeelden|tuincentrum|woonwinkel|meubel|lijstenmakerij/i;
 function isExcludedPlace(p) {
   if (p.pt && EXCLUDED_PRIMARY_TYPES.has(p.pt)) return true;
   return EXCLUDED_NAME_RE.test(p.name);
