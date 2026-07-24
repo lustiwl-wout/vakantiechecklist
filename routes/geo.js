@@ -76,7 +76,7 @@ async function nominatimFetch(path) {
   return res.json();
 }
 
-async function overpassFetch(query) {
+async function overpassFetch(query, clientTimeoutMs = 30000) {
   let lastErr = null;
   for (const endpoint of OVERPASS_ENDPOINTS) {
     try {
@@ -84,7 +84,7 @@ async function overpassFetch(query) {
         method: 'POST',
         headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: 'data=' + encodeURIComponent(query),
-        signal: AbortSignal.timeout(30000),
+        signal: AbortSignal.timeout(clientTimeoutMs),
       });
       if (!res.ok) throw new Error(`Overpass ${res.status} (${endpoint})`);
       const data = await res.json();
@@ -236,7 +236,7 @@ const POI_CATEGORIES = [
   { key: 'restaurant', selectors: ['["amenity"="restaurant"]'], radiusKm: 8, cap: 40, label: 'Restaurants', ages: 'alle leeftijden', activity: 'nightlife', gtype: 'restaurant' },
 ];
 
-function buildOverpassQuery(lat, lng) {
+function buildOverpassQuery(lat, lng, timeoutS = 25) {
   // Een globale bounding box maakt de query fundamenteel goedkoop: elke
   // tag-zoekopdracht blijft binnen het 35km-gebied in plaats van tegen
   // wereldwijde indexen aan te lopen. Zonder bbox viel de eerste
@@ -256,7 +256,7 @@ function buildOverpassQuery(lat, lng) {
       `(\n  nwr${s}["name"](around:${c.radiusKm * 1000},${lat},${lng});\n);\nout center ${c.cap};`
     )
   ).join('\n');
-  return `[out:json][timeout:25][bbox:${bbox}];
+  return `[out:json][timeout:${timeoutS}][bbox:${bbox}];
 ${blocks}
 way["boundary"="administrative"]["admin_level"="2"](around:30000,${lat},${lng});
 rel(bw)["boundary"="administrative"]["admin_level"="2"];
@@ -539,8 +539,13 @@ function nearbyKey(lat, lng) {
 // We bewaren bewust de ONGEFILTERDE elementen: zo profiteren
 // filter-verbeteringen direct van de bestaande cache in plaats van
 // telkens een trage nieuwe zoektocht af te dwingen.
-async function fetchNearbyRaw(lat, lng) {
-  const data = await overpassFetch(buildOverpassQuery(lat, lng));
+// opts.patient: achtergrondtaken (voorladen, verversen) mogen véél langer
+// wachten dan een gebruiker die naar een spinner kijkt — drukke Overpass-
+// servers halen het dan vaak alsnog.
+async function fetchNearbyRaw(lat, lng, opts = {}) {
+  const data = opts.patient
+    ? await overpassFetch(buildOverpassQuery(lat, lng, 55), 65000)
+    : await overpassFetch(buildOverpassQuery(lat, lng));
 
   // Overpass geeft bij een timeout vaak HTTP 200 met een 'remark' en
   // (vrijwel) lege elements terug. Dat is een fout, geen 'niets in de
@@ -906,11 +911,11 @@ async function enrichWithRatings(payload) {
 // gelijktijdige aanvragen delen dezelfde promise in plaats van Overpass
 // dubbel te belasten (wat het IP-limiet juist uitlokt).
 const rawInFlight = new Map(); // key → Promise<raw>
-function fetchNearbyRawShared(lat, lng) {
+function fetchNearbyRawShared(lat, lng, opts = {}) {
   const key = nearbyKey(lat, lng);
   const existing = rawInFlight.get(key);
   if (existing) return existing;
-  const p = fetchNearbyRaw(lat, lng).finally(() => rawInFlight.delete(key));
+  const p = fetchNearbyRaw(lat, lng, opts).finally(() => rawInFlight.delete(key));
   rawInFlight.set(key, p);
   return p;
 }
@@ -922,7 +927,7 @@ function backgroundRefresh(lat, lng) {
   if (refreshInFlight.has(key)) return;
   refreshInFlight.add(key);
   console.log('[geo/cache] cache verouderd — automatische verversing voor', key);
-  fetchNearbyRawShared(lat, lng)
+  fetchNearbyRawShared(lat, lng, { patient: true })
     .catch(err => console.warn('[geo/cache] achtergrond-verversing mislukt:', err.message))
     .finally(() => refreshInFlight.delete(key));
 }
@@ -970,17 +975,27 @@ router.get('/nearby', async (req, res) => {
 
 // Fire-and-forget: omgevingsdata alvast ophalen zodra een checklist een
 // kaartlocatie krijgt — dan is de Omgeving-pagina daarna meteen snel.
-function prefetchNearby(lat, lng) {
+function prefetchNearby(lat, lng, attempt = 1) {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
   cacheGetAny(nearbyKey(lat, lng), TTL_NEARBY)
     .then(hit => {
       if (usableRaw(hit) && hit.fresh) return null;
-      console.log('[geo/prefetch] omgeving voorladen voor', lat.toFixed(2), lng.toFixed(2));
+      console.log(`[geo/prefetch] omgeving voorladen voor ${lat.toFixed(2)} ${lng.toFixed(2)}${attempt > 1 ? ` (poging ${attempt})` : ''}`);
       // Alleen de ruwe omgevingsdata voorladen. Google-opzoekingen doen
       // we uitsluitend voor pagina's die iemand écht bekijkt.
-      return fetchNearbyRawShared(lat, lng);
+      return fetchNearbyRawShared(lat, lng, { patient: true });
     })
-    .catch(err => console.warn('[geo/prefetch] mislukt (geen probleem):', err.message));
+    .catch(err => {
+      // Overpass heeft drukke momenten; op de achtergrond proberen we
+      // het gewoon nog eens — tegen de tijd dat iemand op Omgeving
+      // drukt staat de data er dan meestal alsnog.
+      if (attempt < 3) {
+        console.warn(`[geo/prefetch] mislukt, nieuwe poging over 3 min (${attempt}/3):`, err.message);
+        setTimeout(() => prefetchNearby(lat, lng, attempt + 1), 3 * 60 * 1000);
+      } else {
+        console.warn('[geo/prefetch] definitief mislukt — wordt opnieuw geprobeerd zodra iemand de Omgeving-pagina opent:', err.message);
+      }
+    });
 }
 
 // Diagnose: zoek op naam rond een punt en laat per gevonden OSM-object
