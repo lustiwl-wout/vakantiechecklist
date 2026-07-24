@@ -1059,8 +1059,8 @@ async function renderChecklist(id, epoch) {
     const visible = visibleItems();
     if (!visible.length) {
       itemsContainer.append(items.length
-        ? el('div', { class: 'empty' }, 'Geen items binnen dit filter.')
-        : el('div', { class: 'card empty' },
+        ? el('div', { class: 'empty no-print' }, 'Geen items binnen dit filter.')
+        : el('div', { class: 'card empty no-print' },
             el('p', {}, 'Je lijst is nog leeg. Voeg hierboven zelf items toe, of laat hem vullen op basis van je reis:'),
             el('a', { href: `#/list/${c.id}/vullen`, class: 'btn btn-primary' }, '✨ Automatisch vullen')));
       return;
