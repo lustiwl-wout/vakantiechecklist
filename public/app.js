@@ -670,7 +670,10 @@ async function renderNew(epoch) {
     const listEl = el('div', {});
     for (const t of templates) {
       const row = el('div', { class: 'traveler' },
-        el('span', { style: 'flex: 1' }, `${t.name} `, el('span', { class: 'muted' }, `(${t.count} items)`)),
+        el('span', { style: 'flex: 1' },
+          el('a', { href: `#/sjabloon/${t.id}`, title: 'Sjabloon bekijken en bewerken' }, t.name),
+          ' ', el('span', { class: 'muted' }, `(${t.count} items)`)),
+        el('a', { href: `#/sjabloon/${t.id}`, class: 'btn btn-sm' }, 'Bewerken'),
         el('button', {
           type: 'button', class: 'btn btn-sm btn-ghost', title: 'Sjabloon verwijderen',
           onclick: async (e) => {
@@ -697,6 +700,119 @@ async function renderNew(epoch) {
 
   clear(app);
   app.append(...[form, manageCard].filter(Boolean));
+}
+
+// Sjabloon bekijken en bewerken: naam, items (tekst, categorie, aantal,
+// voor wie), items toevoegen/verwijderen, of het hele sjabloon weggooien.
+async function renderTemplate(id, epoch) {
+  clear(app);
+  app.append(el('p', { class: 'loading' }, 'Laden…'));
+  let t;
+  try {
+    const r = await api(`/api/templates/${id}`);
+    t = r.template;
+  } catch (err) {
+    if (isStale(epoch)) return;
+    if (err.status === 401) return navigate('#/login');
+    return showError(err);
+  }
+  if (isStale(epoch)) return;
+
+  const local = (Array.isArray(t.items) ? t.items : []).map(x => ({ ...x }));
+  const errBox = el('div', { class: 'error' });
+  const nameIn = el('input', { type: 'text', value: t.name, maxlength: '80' });
+
+  // Suggestielijsten uit het sjabloon zelf (vrij typen blijft mogelijk).
+  const catListId = `tmplcats-${id}`;
+  const travListId = `tmpltrav-${id}`;
+  const catDatalist = el('datalist', { id: catListId },
+    ...[...new Set(local.map(i => i.category).filter(Boolean))].map(v => el('option', { value: v })));
+  const travDatalist = el('datalist', { id: travListId },
+    ...[...new Set(local.map(i => i.traveler).filter(Boolean))].map(v => el('option', { value: v })));
+
+  const listEl = el('div', {});
+  function paintRows() {
+    clear(listEl);
+    local.forEach((it, i) => {
+      listEl.append(el('div', { class: 'tmpl-row' },
+        el('input', {
+          type: 'text', value: it.text || '', maxlength: '200', placeholder: 'Item',
+          class: 'tmpl-text', oninput: (e) => { local[i].text = e.target.value; },
+        }),
+        el('input', {
+          type: 'text', value: it.category || '', list: catListId, placeholder: 'Categorie',
+          class: 'tmpl-cat', oninput: (e) => { local[i].category = e.target.value; },
+        }),
+        el('input', {
+          type: 'number', min: '1', max: '99', value: String(it.quantity || 1),
+          class: 'qty-input', title: 'Aantal', 'aria-label': 'Aantal',
+          oninput: (e) => { local[i].quantity = Number(e.target.value) || 1; },
+        }),
+        el('input', {
+          type: 'text', value: it.traveler || '', list: travListId, placeholder: 'Voor wie?',
+          class: 'tmpl-cat', title: 'Leeg = gedeeld',
+          oninput: (e) => { local[i].traveler = e.target.value; },
+        }),
+        el('button', {
+          type: 'button', class: 'btn btn-sm btn-ghost', title: 'Item verwijderen',
+          onclick: () => { local.splice(i, 1); paintRows(); },
+        }, '✕'),
+      ));
+    });
+  }
+  paintRows();
+
+  const saveBtn = el('button', { class: 'btn btn-primary' }, 'Sjabloon opslaan');
+  saveBtn.addEventListener('click', async () => {
+    errBox.textContent = '';
+    saveBtn.disabled = true;
+    try {
+      await api(`/api/templates/${id}`, {
+        method: 'PUT',
+        body: { name: nameIn.value, items: local },
+      });
+      toast('Sjabloon opgeslagen');
+      navigate('#/new');
+    } catch (err) {
+      saveBtn.disabled = false;
+      errBox.textContent = err.message;
+    }
+  });
+
+  clear(app);
+  app.append(
+    el('a', { href: '#/new', class: 'btn btn-sm btn-ghost' }, '← Terug'),
+    el('h1', { style: 'margin-top: 8px' }, 'Sjabloon bewerken'),
+    el('p', { class: 'muted' },
+      'Wijzigingen gelden alleen voor dit sjabloon — lijsten die je er eerder mee maakte veranderen niet mee.'),
+    el('div', { class: 'card spaced' },
+      el('div', { class: 'field' }, el('label', {}, 'Naam van het sjabloon *'), nameIn),
+      el('div', { class: 'field' },
+        el('label', {}, `Items (${local.length})`),
+        listEl, catDatalist, travDatalist,
+      ),
+      el('button', {
+        class: 'btn btn-sm',
+        onclick: () => { local.push({ text: '', category: '', quantity: 1, traveler: null, origin: 'user' }); paintRows(); },
+      }, '+ Item'),
+    ),
+    errBox,
+    el('div', { class: 'actions' },
+      el('button', {
+        class: 'btn btn-danger',
+        onclick: async (e) => {
+          if (!confirm(`Sjabloon "${t.name}" verwijderen? Bestaande lijsten blijven staan.`)) return;
+          e.target.disabled = true;
+          try {
+            await api(`/api/templates/${id}`, { method: 'DELETE' });
+            toast('Sjabloon verwijderd');
+            navigate('#/new');
+          } catch (err) { e.target.disabled = false; toast(err.message); }
+        },
+      }, 'Verwijderen'),
+      saveBtn,
+    ),
+  );
 }
 
 // 'Automatisch vullen': de reisvragen, los van het aanmaken. Antwoorden
@@ -1483,41 +1599,60 @@ async function renderChecklist(id, epoch) {
           },
         }, '👥 Reizigers'),
         el('a', { href: `#/list/${c.id}/vullen`, class: 'btn btn-sm' }, '✨ Automatisch vullen'),
-        el('button', {
-          class: 'btn btn-sm',
-          title: 'Bewaar deze lijst als herbruikbaar sjabloon voor volgende vakanties',
-          onclick: async () => {
-            const name = prompt('Naam voor het sjabloon:', c.name);
-            if (name == null || !name.trim()) return;
-            try {
-              await api('/api/templates', { method: 'POST', body: { checklistId: c.id, name } });
-              toast('Sjabloon opgeslagen — je vindt het bij "Nieuwe checklist"');
-            } catch (err) { toast(err.message); }
-          },
-        }, 'Sjabloon opslaan'),
-        el('button', {
-          class: 'btn btn-sm',
-          onclick: async () => {
-            try {
-              const res = await api(`/api/checklists/${c.id}/duplicate`, { method: 'POST' });
-              toast('Lijst gedupliceerd');
-              navigate(`#/list/${res.checklist.id}`);
-            } catch (err) { toast(err.message); }
-          },
-        }, 'Dupliceren'),
-        el('button', { class: 'btn btn-sm', onclick: () => window.print() }, 'Afdrukken'),
-        el('button', {
-          class: 'btn btn-danger btn-sm',
-          onclick: async () => {
-            if (!confirm(`Checklist "${c.name}" verwijderen? Dit kan niet ongedaan gemaakt worden.`)) return;
-            try {
-              await api(`/api/checklists/${c.id}`, { method: 'DELETE' });
-              try { localStorage.removeItem(collapseKey); } catch {}
-              toast('Checklist verwijderd');
-              navigate('#/');
-            } catch (err) { toast(err.message); }
-          },
-        }, 'Verwijderen'),
+        // Secundaire acties achter één ⋯-knop: houdt de kop compact,
+        // vooral op mobiel waar elke extra knop een regel kost.
+        (() => {
+          const menuItem = (label, handler, danger) => el('button', {
+            class: danger ? 'danger' : '',
+            onclick: (e) => { pop.hidden = true; handler(e); },
+          }, label);
+          const pop = el('div', { class: 'menu-pop', hidden: true });
+          pop.append(
+            menuItem('Sjabloon opslaan', async () => {
+              const name = prompt('Naam voor het sjabloon:', c.name);
+              if (name == null || !name.trim()) return;
+              try {
+                await api('/api/templates', { method: 'POST', body: { checklistId: c.id, name } });
+                toast('Sjabloon opgeslagen — je vindt het bij "Nieuwe checklist"');
+              } catch (err) { toast(err.message); }
+            }),
+            menuItem('Dupliceren', async () => {
+              try {
+                const res = await api(`/api/checklists/${c.id}/duplicate`, { method: 'POST' });
+                toast('Lijst gedupliceerd');
+                navigate(`#/list/${res.checklist.id}`);
+              } catch (err) { toast(err.message); }
+            }),
+            menuItem('Afdrukken', () => window.print()),
+            menuItem('Verwijderen', async () => {
+              if (!confirm(`Checklist "${c.name}" verwijderen? Dit kan niet ongedaan gemaakt worden.`)) return;
+              try {
+                await api(`/api/checklists/${c.id}`, { method: 'DELETE' });
+                try { localStorage.removeItem(collapseKey); } catch {}
+                toast('Checklist verwijderd');
+                navigate('#/');
+              } catch (err) { toast(err.message); }
+            }, true),
+          );
+          const btn = el('button', {
+            class: 'btn btn-sm', title: 'Meer acties',
+            'aria-haspopup': 'true', 'aria-label': 'Meer acties',
+          }, '⋯');
+          btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            pop.hidden = !pop.hidden;
+            if (!pop.hidden) {
+              const close = (ev) => {
+                if (!pop.contains(ev.target)) {
+                  pop.hidden = true;
+                  document.removeEventListener('click', close);
+                }
+              };
+              setTimeout(() => document.addEventListener('click', close), 0);
+            }
+          });
+          return el('div', { class: 'menu-wrap' }, btn, pop);
+        })(),
       ),
     ),
     el('div', { class: 'global-progress no-print' },
@@ -1996,6 +2131,8 @@ async function render() {
   // /edit is de oude naam van deze pagina — oude bladwijzers blijven werken.
   const fillM = hash.match(/^#\/list\/(\d+)\/(vullen|edit)$/);
   if (fillM) return renderAutoFill(fillM[1], epoch);
+  const tmplM = hash.match(/^#\/sjabloon\/(\d+)$/);
+  if (tmplM) return renderTemplate(tmplM[1], epoch);
   const geoM = hash.match(/^#\/list\/(\d+)\/omgeving$/);
   if (geoM) return renderOmgeving(geoM[1], epoch);
   if (hash === '#/gezin') return renderFamily(epoch);

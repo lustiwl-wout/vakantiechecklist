@@ -52,6 +52,50 @@ router.post('/', async (req, res) => {
   res.json({ template: rows[0] });
 });
 
+router.get('/:id', async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT id, name, items, created_at FROM templates WHERE id = $1 AND user_id = $2',
+    [req.params.id, req.userId]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'Sjabloon niet gevonden' });
+  res.json({ template: rows[0] });
+});
+
+// Sjabloon bewerken: naam en/of de volledige item-lijst vervangen.
+router.put('/:id', async (req, res) => {
+  const { rows: cur } = await pool.query(
+    'SELECT id FROM templates WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]
+  );
+  if (!cur[0]) return res.status(404).json({ error: 'Sjabloon niet gevonden' });
+
+  const name = String(req.body.name || '').trim().slice(0, 80);
+  if (!name) return res.status(400).json({ error: 'Geef het sjabloon een naam' });
+
+  const list = Array.isArray(req.body.items) ? req.body.items : [];
+  const cleaned = list
+    .map(it => ({
+      text: String((it && it.text) || '').trim().slice(0, 200),
+      category: (it && it.category && String(it.category).trim())
+        ? String(it.category).trim().slice(0, 60) : 'Overig',
+      quantity: (Number.isInteger(Number(it && it.quantity)) && it.quantity >= 1 && it.quantity <= 99)
+        ? Number(it.quantity) : 1,
+      traveler: (it && typeof it.traveler === 'string' && it.traveler.trim())
+        ? it.traveler.trim().slice(0, 60) : null,
+      origin: (it && it.origin === 'generated') ? 'generated' : 'user',
+    }))
+    .filter(it => it.text)
+    .slice(0, 500);
+  if (!cleaned.length) {
+    return res.status(400).json({ error: 'Een sjabloon zonder items is niet zinvol — verwijder het dan liever' });
+  }
+
+  const { rows } = await pool.query(
+    'UPDATE templates SET name = $2, items = $3::jsonb WHERE id = $1 RETURNING id, name',
+    [req.params.id, name, JSON.stringify(cleaned)]
+  );
+  res.json({ template: rows[0] });
+});
+
 router.delete('/:id', async (req, res) => {
   const result = await pool.query(
     'DELETE FROM templates WHERE id = $1 AND user_id = $2', [req.params.id, req.userId]

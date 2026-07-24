@@ -250,6 +250,35 @@ textarea { min-height: 80px; resize: vertical; }
   flex-wrap: wrap;
 }
 .head-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* ⋯-menu voor secundaire acties in de kop. */
+.menu-wrap { position: relative; }
+.menu-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  z-index: 60;
+  padding: 6px;
+}
+.menu-pop button {
+  background: none;
+  border: none;
+  text-align: left;
+  padding: 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--text);
+}
+.menu-pop button:hover { background: var(--surface-2); }
+.menu-pop button.danger { color: var(--danger); }
 .checklist-meta { color: var(--muted); font-size: 14px; margin-top: 2px; }
 
 .add-item {
@@ -525,6 +554,12 @@ textarea { min-height: 80px; resize: vertical; }
 .add-item .qty-input { flex: 0 0 64px; }
 /* Categorie-invoer: vrij tekstveld, maar qua breedte een 'select'. */
 .add-item .cat-input { flex: 0 1 160px; }
+
+/* Sjabloon-editor: één regel per item, wrapt netjes op smalle schermen. */
+.tmpl-row { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; align-items: center; }
+.tmpl-row .tmpl-text { flex: 2 1 200px; min-width: 0; }
+.tmpl-row .tmpl-cat { flex: 1 1 120px; min-width: 0; }
+.tmpl-row .qty-input { flex: 0 0 64px; }
 
 .drag-handle {
   cursor: grab;
