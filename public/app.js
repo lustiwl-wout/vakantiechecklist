@@ -1247,11 +1247,11 @@ async function renderChecklist(id, epoch) {
                 method: 'PATCH',
                 body: {
                   text: textIn.value.trim() || item.text,
-                  traveler: travSel.value.trim() || null,
+                  traveler: normTraveler(travSel.value) || null,
                   category: catSel.value.trim() || 'Overig',
                 },
               });
-              if (travSel.value.trim()) await ensureTraveler(travSel.value.trim());
+              if (normTraveler(travSel.value)) await ensureTraveler(normTraveler(travSel.value));
               Object.assign(item, res.item);
               paintItems();
               paintProgress();
@@ -1326,10 +1326,17 @@ async function renderChecklist(id, epoch) {
   }
   paintTravelerOptions();
 
+  // 'Gedeeld' is het gereserveerde woord voor items zonder eigenaar —
+  // wie het intypt bedoelt géén reiziger met die naam.
+  function normTraveler(v) {
+    const s = String(v || '').trim();
+    return s.toLowerCase() === 'gedeeld' ? '' : s;
+  }
+
   // Onbekende reizigersnaam? Dan bestaat die reiziger vanaf nu — hij komt
   // ook in het 👥-overzicht en (zonder leeftijd) in Automatisch vullen.
   async function ensureTraveler(name) {
-    if (!name) return;
+    if (!name || name.toLowerCase() === 'gedeeld') return;
     if (allTravelerNames().some(n => n.toLowerCase() === name.toLowerCase())) return;
     const list = (Array.isArray(c.travelers) ? c.travelers : [])
       .filter(t => t && (t.name || t.birthdate || t.category || t.age != null));
@@ -1360,7 +1367,7 @@ async function renderChecklist(id, epoch) {
       if (!text) return;
       const category = newItemCat.value.trim() || 'Overig';
       const quantity = Math.max(1, Math.min(99, Number(newItemQty.value) || 1));
-      const traveler = newItemTrav.value.trim() || undefined;
+      const traveler = normTraveler(newItemTrav.value) || undefined;
       try {
         const res = await api(`/api/checklists/${c.id}/items`, {
           method: 'POST', body: { text, category, quantity, traveler },
@@ -1508,7 +1515,14 @@ async function renderChecklist(id, epoch) {
               // daarvoor is Automatisch vullen.
               await api(`/api/checklists/${id}`, {
                 method: 'PATCH',
-                body: { travelers: local.map(t => ({ ...t, name: (t.name || '').trim() })) },
+                body: {
+                  travelers: local
+                    .map(t => ({ ...t, name: (t.name || '').trim() }))
+                    // 'Gedeeld' is geen persoon — losse regels met alleen
+                    // die naam vervallen stilletjes.
+                    .filter(t => t.birthdate || t.category || t.age != null
+                      || t.name.toLowerCase() !== 'gedeeld'),
+                },
               });
               toast('Reizigers opgeslagen');
               render();

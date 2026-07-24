@@ -130,6 +130,26 @@ async function init() {
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS border_countries JSONB NOT NULL DEFAULT '[]';
   `);
 
+  // Data-hygiëne: 'Gedeeld' is het gereserveerde woord voor items zonder
+  // eigenaar, maar was even als échte reizigersnaam op te slaan via het
+  // vrije invoerveld. Idempotente opschoning van wat er zo in kwam.
+  await pool.query("UPDATE items SET traveler = NULL WHERE traveler ILIKE 'gedeeld'").catch(() => {});
+  await pool.query(`
+    UPDATE checklists SET travelers = COALESCE(
+      (SELECT jsonb_agg(t) FROM jsonb_array_elements(travelers) AS t
+        WHERE NOT (lower(coalesce(t->>'name', '')) = 'gedeeld'
+                   AND t->>'birthdate' IS NULL
+                   AND t->>'category' IS NULL
+                   AND t->>'age' IS NULL)),
+      '[]'::jsonb)
+    WHERE EXISTS (
+      SELECT 1 FROM jsonb_array_elements(travelers) AS t
+       WHERE lower(coalesce(t->>'name', '')) = 'gedeeld'
+         AND t->>'birthdate' IS NULL
+         AND t->>'category' IS NULL
+         AND t->>'age' IS NULL)
+  `).catch(() => {});
+
   // Ruim heel oude geo-cache op (best effort) en log de stand, zodat in
   // de Render-logs zichtbaar is of de omgevings-cache gevuld raakt.
   await pool.query("DELETE FROM geo_cache WHERE fetched_at < NOW() - interval '90 days'").catch(() => {});

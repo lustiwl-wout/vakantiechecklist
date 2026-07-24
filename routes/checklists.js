@@ -45,6 +45,9 @@ function cleanTravelers(input) {
         if (Number.isFinite(age) && age >= 0 && age <= 120) return { name, age };
         return null;
       }
+      // 'Gedeeld' is geen persoon maar het gereserveerde woord voor
+      // items zonder eigenaar — nooit als reiziger opslaan.
+      if (name.toLowerCase() === 'gedeeld') return null;
       return name ? { name } : null;
     })
     .filter(Boolean);
@@ -289,8 +292,10 @@ router.post('/:id/items', async (req, res) => {
   if (!text) return res.status(400).json({ error: 'Tekst is verplicht' });
   let quantity = Number(req.body.quantity);
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) quantity = 1;
-  const traveler = (typeof req.body.traveler === 'string' && req.body.traveler.trim())
+  let traveler = (typeof req.body.traveler === 'string' && req.body.traveler.trim())
     ? req.body.traveler.trim().slice(0, 60) : null;
+  // 'Gedeeld' is het gereserveerde woord voor 'geen persoon'.
+  if (traveler && traveler.toLowerCase() === 'gedeeld') traveler = null;
 
   // Positie in hetzelfde statement bepalen: geen race bij gelijktijdige adds.
   const { rows } = await pool.query(
