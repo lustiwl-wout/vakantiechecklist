@@ -801,7 +801,8 @@ async function renderTemplate(id, epoch) {
       listEl.append(el('div', { class: 'tmpl-row' },
         el('input', {
           type: 'text', value: it.text || '', maxlength: '200', placeholder: 'Item',
-          class: 'tmpl-text', oninput: (e) => { local[i].text = e.target.value; },
+          class: 'tmpl-text', autocapitalize: 'off',
+          oninput: (e) => { local[i].text = e.target.value; },
         }),
         el('input', {
           type: 'text', value: it.category || '', list: catListId, placeholder: 'Categorie',
@@ -1320,7 +1321,7 @@ async function renderChecklist(id, epoch) {
     const li = textSpan.closest('li');
     if (!li || li.querySelector('.item-editor')) return;
 
-    const textIn = el('input', { type: 'text', value: item.text, maxlength: '200' });
+    const textIn = el('input', { type: 'text', value: item.text, maxlength: '200', autocapitalize: 'off' });
     // Dezelfde dropdown-met-'+ Nieuw…' als het toevoeg-formulier.
     const travSel = comboField({
       options: allTravelerNames, value: item.traveler || '',
@@ -1375,9 +1376,6 @@ async function renderChecklist(id, epoch) {
 
   function initSortable() {
     if (typeof Sortable === 'undefined') return;
-    // Herordenen alleen in het 'Alles'-overzicht: in een gefilterde
-    // weergave zou de volgorde van verborgen items door elkaar raken.
-    if (activeTraveler !== null) return;
     itemsContainer.querySelectorAll('.item-list').forEach(list => {
       Sortable.create(list, {
         handle: '.drag-handle',
@@ -1388,19 +1386,29 @@ async function renderChecklist(id, epoch) {
     });
   }
 
+  // Werkt ook in een gefilterde weergave: de zichtbare items nemen — in
+  // hun nieuwe volgorde — de sloten in die zichtbare items eerst hadden;
+  // verborgen items blijven precies waar ze stonden.
   async function persistOrder() {
-    if (activeTraveler !== null) return;
-    const ids = Array.from(itemsContainer.querySelectorAll('.item')).map(li => Number(li.dataset.id));
-    // Update local items array order to match DOM
+    const domIds = Array.from(itemsContainer.querySelectorAll('.item')).map(li => Number(li.dataset.id));
+    const domSet = new Set(domIds);
     const byId = new Map(items.map(i => [i.id, i]));
-    items = ids.map(id => byId.get(id)).filter(Boolean);
+    let k = 0;
+    items = items
+      .map(it => domSet.has(it.id) ? byId.get(domIds[k++]) : it)
+      .filter(Boolean);
     items.forEach((it, idx) => { it.position = idx; });
-    try { await api(`/api/checklists/${c.id}/reorder`, { method: 'POST', body: { itemIds: ids } }); }
-    catch (err) { toast(err.message); }
+    try {
+      await api(`/api/checklists/${c.id}/reorder`, {
+        method: 'POST', body: { itemIds: items.map(i => i.id) },
+      });
+    } catch (err) { toast(err.message); }
   }
 
   // Add item form
-  const newItemIn = el('input', { type: 'text', placeholder: 'Item toevoegen…' });
+  // autocapitalize uit: het (mobiele) toetsenbord maakt er anders
+  // ongevraagd 'Zonnebrand' van waar 'zonnebrand' getypt is.
+  const newItemIn = el('input', { type: 'text', placeholder: 'Item toevoegen…', autocapitalize: 'off' });
   const newItemQty = el('input', { type: 'number', min: '1', max: '99', value: '1', 'aria-label': 'Aantal', class: 'qty-input', title: 'Aantal' });
   // Categorie en 'voor wie' zijn dropdowns met een '+ Nieuw…'-optie:
   // kies uit wat er is, of typ iets nieuws — dat bestaat vanaf dat
