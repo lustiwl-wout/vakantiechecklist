@@ -451,11 +451,44 @@ function currentVersion(cached) {
   return !!(cached && cached.data && cached.data.v === PLACES_VERSION);
 }
 
+// Google-gebruikers bestempelen natuurgebieden soms als wildpark
+// (Mepperhooilanden: primair type wildlife_park). Namen die
+// onmiskenbaar een natuurgebied beschrijven horen bij Natuur — tenzij
+// de naam zelf al park/zoo/boerderij zegt (Wildpark Lüneburger Heide
+// en het Veenpark blijven gewoon een uitje).
+// Let op: geen \b vóór de termen — Nederlandse namen zijn samen-
+// stellingen ('Mepperhooilanden', 'Fochteloërveen', 'Dwingelderveld').
+const NATURE_NAME_RE = /(hooilanden|veen|heide|moeras|uiterwaarden|duinen|veld|natuurgebied|natuurreservaat)\b/i;
+function looksLikeNatureArea(p) {
+  return NATURE_NAME_RE.test(p.name) && !/park|zoo|dierentuin|boerderij|farm/i.test(p.name);
+}
+
 // Bouwt het advies-antwoord uit de gecachte ruwe plekken — filters en
 // sortering draaien bij het lezen, dus aanscherpen kost geen nieuwe fetch.
 function buildPayload(lat, lng, raw) {
+  // Natuur-uitschieters uit dieren-/pretpark-categorieën overhevelen.
+  const cats = {};
+  for (const [k, list] of Object.entries(raw.cats)) cats[k] = [...(list || [])];
+  cats.nature = cats.nature || [];
+  const natureNames = new Set(cats.nature.map(p => p.name.toLowerCase()));
+  for (const k of ['zoo', 'themepark', 'aquarium']) {
+    if (!cats[k]) continue;
+    const stay = [];
+    for (const p of cats[k]) {
+      if (looksLikeNatureArea(p)) {
+        if (!natureNames.has(p.name.toLowerCase())) {
+          cats.nature.push(p);
+          natureNames.add(p.name.toLowerCase());
+        }
+      } else {
+        stay.push(p);
+      }
+    }
+    cats[k] = stay;
+  }
+
   const categories = PLACES_CATEGORIES.map(def => {
-    const pois = (raw.cats[def.key] || [])
+    const pois = (cats[def.key] || [])
       .filter(p => !isExcludedPlace(p))
       // (Tijdelijk) gesloten? Dan heeft tonen geen zin. Zonder status
       // (oudere cache) tonen we gewoon.
