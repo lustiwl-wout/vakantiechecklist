@@ -311,9 +311,13 @@ async function renderDashboard(epoch) {
   }
 }
 
-// ---------- shared form (create + edit) ----------
+// ---------- 'Automatisch vullen'-formulier ----------
+// Alle reisvragen bij elkaar op één pagina. De antwoorden sturen de
+// generator; de uitkomst komt als voorstellen terug (toevoegen én
+// verwijderen) — de lijst zelf blijft van de gebruiker. De kaartlocatie
+// hoort hier bewust niet bij: die vraagt de Omgeving-pagina pas.
 
-function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries: countryList = [], family = [] }) {
+function buildFillForm({ initial = {}, onSubmit, countries: countryList = [], family = [] }) {
   const errBox = el('div', { class: 'error' });
 
   // Reizigers: gezinsleden (aanvinken) + losse medereizigers (categorie).
@@ -340,8 +344,8 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
         guests.push({ name: t.name, category: 'volwassene' });
       }
     }
-  } else if (mode === 'create') {
-    // Nieuwe reis: standaard met het hele gezin.
+  } else {
+    // Nog geen reizigers ingevuld: standaard met het hele gezin.
     for (const m of family) familySelected.set(m.id, true);
     if (!family.length) guests.push({ name: '', category: 'volwassene' });
   }
@@ -354,85 +358,9 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
       el('option', { value: cn.code, selected: cn.code === (initial.country || '') }, cn.name)
     )
   );
-  const destIn = el('input', { type: 'text', placeholder: 'Plaats / regio (optioneel)', value: initial.destination || '' });
   const startIn = el('input', { type: 'date', value: isoDateOnly(initial.startDate) });
   const endIn = el('input', { type: 'date', value: isoDateOnly(initial.endDate) });
   const rentalIn = el('input', { type: 'checkbox', checked: initial.rentalCar === true });
-
-  // Kaart-picker (OpenStreetMap/Leaflet): zoeken of klikken zet de
-  // bestemming, en vult land + plaats automatisch in.
-  let pickedLat = initial.lat ?? null;
-  let pickedLng = initial.lng ?? null;
-  const mapDiv = el('div', { class: 'map-box' });
-  const mapSearchIn = el('input', { type: 'text', placeholder: 'Zoek je bestemming… (bv. Emmen of Salou)' });
-  const mapResults = el('div', { class: 'map-results' });
-  const mapHint = el('p', { class: 'muted', style: 'margin: 6px 0 0' },
-    'Zoek hierboven of klik op de kaart. Land en plaats worden automatisch ingevuld.');
-
-  function applyPlace(p) {
-    if (p.country) countrySel.value = p.country;
-    if (p.place) destIn.value = p.place;
-  }
-
-  let leafletMap = null;
-  let marker = null;
-  function setMarker(lat, lng, pan) {
-    pickedLat = lat; pickedLng = lng;
-    if (!leafletMap) return;
-    if (!marker) marker = L.marker([lat, lng]).addTo(leafletMap);
-    else marker.setLatLng([lat, lng]);
-    if (pan) leafletMap.setView([lat, lng], Math.max(leafletMap.getZoom(), 9));
-  }
-
-  function initMap() {
-    if (typeof L === 'undefined') {
-      mapDiv.textContent = 'Kaart kon niet geladen worden — je kunt land en plaats gewoon handmatig invullen.';
-      return;
-    }
-    leafletMap = L.map(mapDiv).setView(
-      pickedLat != null ? [pickedLat, pickedLng] : [52.2, 5.3],
-      pickedLat != null ? 9 : 6
-    );
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18,
-      attribution: '&copy; OpenStreetMap-bijdragers',
-    }).addTo(leafletMap);
-    if (pickedLat != null) setMarker(pickedLat, pickedLng, false);
-    leafletMap.on('click', async (e) => {
-      setMarker(e.latlng.lat, e.latlng.lng, false);
-      try {
-        const r = await api(`/api/geo/reverse?lat=${e.latlng.lat}&lng=${e.latlng.lng}`);
-        applyPlace(r);
-      } catch { /* handmatig invullen kan altijd */ }
-    });
-    // Leaflet meet de container pas goed als hij zichtbaar is.
-    setTimeout(() => leafletMap.invalidateSize(), 100);
-  }
-  setTimeout(initMap, 0);
-
-  let searchTimer = null;
-  mapSearchIn.addEventListener('input', () => {
-    clearTimeout(searchTimer);
-    const q = mapSearchIn.value.trim();
-    if (q.length < 2) { clear(mapResults); return; }
-    searchTimer = setTimeout(async () => {
-      try {
-        const r = await api(`/api/geo/search?q=${encodeURIComponent(q)}`);
-        clear(mapResults);
-        for (const hit of r.results) {
-          mapResults.append(el('button', {
-            type: 'button', class: 'map-result',
-            onclick: () => {
-              clear(mapResults);
-              mapSearchIn.value = hit.place || hit.label;
-              setMarker(hit.lat, hit.lng, true);
-              applyPlace(hit);
-            },
-          }, hit.label));
-        }
-      } catch { /* zoeken faalt stil; kaartklik werkt nog */ }
-    }, 400);
-  });
 
   const transportSel = el('select', {}, ...TRANSPORT.map(o =>
     el('option', { value: o.value, selected: o.value === (initial.transport || '') }, o.label)
@@ -463,49 +391,43 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
     )
   );
 
-  // Quantities (only in create mode — items zijn al gegenereerd in edit)
-  let quantitiesSection = null;
-  let qInputs = null;
-  if (mode === 'create') {
-    const Q_KEYS = ['underwear', 'socks', 'tshirts', 'sweaters', 'bottoms'];
-    const userTouched = Object.fromEntries(Q_KEYS.map(k => [k, false]));
-    qInputs = Object.fromEntries(Q_KEYS.map(k =>
-      [k, el('input', { type: 'number', min: '0', max: '99' })]
-    ));
-    Object.entries(qInputs).forEach(([k, inp]) => {
-      inp.addEventListener('input', () => { userTouched[k] = true; });
-    });
+  // Hoeveelheden kleding: standaardwaarden volgen de reisduur zolang de
+  // gebruiker ze niet zelf aanraakt.
+  const Q_KEYS = ['underwear', 'socks', 'tshirts', 'sweaters', 'bottoms'];
+  const userTouched = Object.fromEntries(Q_KEYS.map(k => [k, false]));
+  const qInputs = Object.fromEntries(Q_KEYS.map(k =>
+    [k, el('input', { type: 'number', min: '0', max: '99' })]
+  ));
+  Object.entries(qInputs).forEach(([k, inp]) => {
+    inp.addEventListener('input', () => { userTouched[k] = true; });
+  });
 
-    function applyDefaults() {
-      const days = daysBetweenISO(startIn.value, endIn.value);
-      const def = defaultQuantities(days);
-      for (const k of Q_KEYS) {
-        if (!userTouched[k]) qInputs[k].value = def[k];
-      }
+  function applyDefaults() {
+    const days = daysBetweenISO(startIn.value, endIn.value);
+    const def = defaultQuantities(days);
+    for (const k of Q_KEYS) {
+      if (!userTouched[k]) qInputs[k].value = def[k];
     }
-    applyDefaults();
-    startIn.addEventListener('change', applyDefaults);
-    endIn.addEventListener('change', applyDefaults);
-
-    quantitiesSection = el('div', { class: 'card' },
-      el('h2', { style: 'margin-top: 0' }, 'Hoeveelheid kleding per persoon'),
-      el('p', { class: 'muted', style: 'margin-top: 0' }, 'Suggesties op basis van de reisduur — pas aan naar wens. Op 0 zetten = niet meenemen. Ondergoed/sokken/t-shirts hebben 1 reservestuk meegerekend.'),
-      el('div', { class: 'row cols-2' },
-        el('div', { class: 'field' }, el('label', {}, 'Ondergoed'), qInputs.underwear),
-        el('div', { class: 'field' }, el('label', {}, 'Sokken'), qInputs.socks),
-      ),
-      el('div', { class: 'row cols-2' },
-        el('div', { class: 'field' }, el('label', {}, 'T-shirts'), qInputs.tshirts),
-        el('div', { class: 'field' }, el('label', {}, 'Trui / vest'), qInputs.sweaters),
-      ),
-      el('div', { class: 'field' }, el('label', {}, 'Broeken / rokken'), qInputs.bottoms),
-    );
   }
+  applyDefaults();
+  startIn.addEventListener('change', applyDefaults);
+  endIn.addEventListener('change', applyDefaults);
 
-  // Medications (only in create)
-  const medsIn = mode === 'create'
-    ? el('textarea', { rows: '3', placeholder: 'Eén medicijn per regel, bv.\nIbuprofen 400 mg\nOogdruppels' })
-    : null;
+  const quantitiesSection = el('div', { class: 'card' },
+    el('h2', { style: 'margin-top: 0' }, 'Hoeveelheid kleding per persoon'),
+    el('p', { class: 'muted', style: 'margin-top: 0' }, 'Suggesties op basis van de reisduur — pas aan naar wens. Op 0 zetten = niet meenemen. Ondergoed/sokken/t-shirts hebben 1 reservestuk meegerekend.'),
+    el('div', { class: 'row cols-2' },
+      el('div', { class: 'field' }, el('label', {}, 'Ondergoed'), qInputs.underwear),
+      el('div', { class: 'field' }, el('label', {}, 'Sokken'), qInputs.socks),
+    ),
+    el('div', { class: 'row cols-2' },
+      el('div', { class: 'field' }, el('label', {}, 'T-shirts'), qInputs.tshirts),
+      el('div', { class: 'field' }, el('label', {}, 'Trui / vest'), qInputs.sweaters),
+    ),
+    el('div', { class: 'field' }, el('label', {}, 'Broeken / rokken'), qInputs.bottoms),
+  );
+
+  const medsIn = el('textarea', { rows: '3', placeholder: 'Eén medicijn per regel, bv.\nIbuprofen 400 mg\nOogdruppels' });
 
   // Travelers UI: gezin aanvinken + medereizigers met leeftijdscategorie.
   const travelersBox = el('div', { class: 'travelers' });
@@ -593,7 +515,6 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
       }
       const data = {
         name: nameIn.value,
-        destination: destIn.value,
         country: countrySel.value,
         startDate: startIn.value,
         endDate: endIn.value,
@@ -603,19 +524,15 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
         accommodation: accomSel.value,
         activities: checked,
         rentalCar: rentalIn.checked,
-        lat: pickedLat,
-        lng: pickedLng,
-      };
-      if (mode === 'create') {
-        data.medications = medsIn.value.split('\n').map(s => s.trim()).filter(Boolean);
-        data.quantities = {
+        medications: medsIn.value.split('\n').map(s => s.trim()).filter(Boolean),
+        quantities: {
           underwear: qInputs.underwear.value,
           socks: qInputs.socks.value,
           tshirts: qInputs.tshirts.value,
           sweaters: qInputs.sweaters.value,
           bottoms: qInputs.bottoms.value,
-        };
-      }
+        },
+      };
       // Dubbelklik-bescherming: op de gratis Render-tier kan een request
       // lang duren; knop uit tot het antwoord er is.
       const submitBtn = e.target.querySelector('button[type="submit"]');
@@ -625,26 +542,19 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
       finally {
         if (submitBtn) {
           submitBtn.disabled = false;
-          submitBtn.textContent = mode === 'create' ? 'Checklist aanmaken' : 'Wijzigingen opslaan';
+          submitBtn.textContent = 'Voorstellen bekijken';
         }
       }
     },
   },
-    el('h1', {}, mode === 'create' ? 'Nieuwe checklist' : 'Checklist bewerken'),
-    mode === 'create'
-      ? el('p', { class: 'muted' }, 'Vul zoveel mogelijk in — hoe meer details, hoe slimmer de inpaklijst.')
-      : el('p', { class: 'muted' }, 'De items op je lijst veranderen niet. Hier pas je alleen de gegevens van de reis aan.'),
+    el('h1', {}, '✨ Automatisch vullen'),
+    el('p', { class: 'muted' },
+      'Vertel iets over je reis, dan stellen we voor wat er op je lijst bij kan — ',
+      'en wat er af kan. Jij kiest per item; niets wordt zomaar gewijzigd.'),
 
     el('div', { class: 'card spaced' },
       el('div', { class: 'field' }, el('label', {}, 'Naam van de reis *'), nameIn),
-      el('div', { class: 'field' },
-        el('label', {}, 'Bestemming op de kaart'),
-        mapSearchIn, mapResults, mapDiv, mapHint,
-      ),
-      el('div', { class: 'row cols-2' },
-        el('div', { class: 'field' }, el('label', {}, 'Land'), countrySel),
-        el('div', { class: 'field' }, el('label', {}, 'Plaats / regio'), destIn),
-      ),
+      el('div', { class: 'field' }, el('label', {}, 'Land'), countrySel),
       el('div', { class: 'row cols-2' },
         el('div', { class: 'field' }, el('label', {}, 'Vertrekdatum'), startIn),
         el('div', { class: 'field' }, el('label', {}, 'Terugkomstdatum'), endIn),
@@ -680,47 +590,118 @@ function buildChecklistForm({ initial = {}, mode = 'create', onSubmit, countries
     ),
 
     quantitiesSection,
-    medsIn ? el('div', { class: 'card' },
+    el('div', { class: 'card' },
       el('h2', { style: 'margin-top: 0' }, 'Medicijnen'),
-      el('p', { class: 'muted', style: 'margin-top: 0' }, 'Welke medicijnen moeten mee? Eén per regel. Komen als losse items in de checklist.'),
+      el('p', { class: 'muted', style: 'margin-top: 0' }, 'Welke medicijnen moeten mee? Eén per regel. Komen als losse items in de checklist; wat er al op staat blijft staan.'),
       medsIn,
-    ) : null,
+    ),
 
     errBox,
     el('div', { class: 'actions' },
       el('a', { href: initial.id ? `#/list/${initial.id}` : '#/', class: 'btn' }, 'Annuleren'),
-      el('button', { type: 'submit', class: 'btn btn-primary' }, mode === 'create' ? 'Checklist aanmaken' : 'Wijzigingen opslaan'),
+      el('button', { type: 'submit', class: 'btn btn-primary' }, 'Voorstellen bekijken'),
     ),
   );
 
   return form;
 }
 
+// Nieuwe vakantie: bewust minimaal — een naam en eventueel een sjabloon
+// als startpunt. De lijst begint leeg; vullen kan handmatig of via
+// 'Automatisch vullen' op de lijst zelf.
 async function renderNew(epoch) {
   clear(app);
   app.append(el('p', { class: 'loading' }, 'Laden…'));
-  let countries = [], family = [];
+  let templates = [];
   try {
-    [countries, family] = await Promise.all([getCountries(), getFamily()]);
+    const r = await api('/api/templates');
+    templates = r.templates || [];
   } catch (err) {
+    if (isStale(epoch)) return;
     if (err.status === 401) return navigate('#/login');
   }
   if (isStale(epoch)) return;
-  clear(app);
-  app.append(buildChecklistForm({
-    mode: 'create',
-    countries,
-    family,
-    initial: {},
-    onSubmit: async (data) => {
-      const res = await api('/api/checklists', { method: 'POST', body: data });
-      toast('Checklist aangemaakt');
-      navigate(`#/list/${res.checklist.id}`);
+
+  const errBox = el('div', { class: 'error' });
+  const nameIn = el('input', { type: 'text', required: true, placeholder: 'Bv. Zomervakantie Spanje' });
+  const tmplSel = el('select', {},
+    el('option', { value: '' }, 'Lege lijst — zelf vullen'),
+    ...templates.map(t => el('option', { value: String(t.id) }, `${t.name} (${t.count} items)`)),
+  );
+
+  const form = el('form', {
+    onsubmit: async (e) => {
+      e.preventDefault();
+      errBox.textContent = '';
+      const submitBtn = e.target.querySelector('button[type="submit"]');
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Bezig…'; }
+      try {
+        const res = await api('/api/checklists', {
+          method: 'POST',
+          body: { name: nameIn.value, templateId: tmplSel.value || undefined },
+        });
+        toast('Checklist aangemaakt');
+        navigate(`#/list/${res.checklist.id}`);
+      } catch (err) {
+        errBox.textContent = err.message;
+        if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Checklist aanmaken'; }
+      }
     },
-  }));
+  },
+    el('h1', {}, 'Nieuwe checklist'),
+    el('p', { class: 'muted' },
+      'Meer heb je nu niet nodig. Op de lijst zelf kun je items toevoegen, ',
+      'de lijst automatisch laten vullen op basis van je reis, en de omgeving verkennen.'),
+    el('div', { class: 'card spaced' },
+      el('div', { class: 'field' }, el('label', {}, 'Naam van de reis *'), nameIn),
+      el('div', { class: 'field' }, el('label', {}, 'Beginnen met'), tmplSel),
+    ),
+    errBox,
+    el('div', { class: 'actions' },
+      el('a', { href: '#/', class: 'btn' }, 'Annuleren'),
+      el('button', { type: 'submit', class: 'btn btn-primary' }, 'Checklist aanmaken'),
+    ),
+  );
+
+  // Sjabloonbeheer op dezelfde pagina: hier kies je ze, hier ruim je ze op.
+  let manageCard = null;
+  if (templates.length) {
+    const listEl = el('div', {});
+    for (const t of templates) {
+      const row = el('div', { class: 'traveler' },
+        el('span', { style: 'flex: 1' }, `${t.name} `, el('span', { class: 'muted' }, `(${t.count} items)`)),
+        el('button', {
+          type: 'button', class: 'btn btn-sm btn-ghost', title: 'Sjabloon verwijderen',
+          onclick: async (e) => {
+            if (!confirm(`Sjabloon "${t.name}" verwijderen? Bestaande lijsten blijven staan.`)) return;
+            e.target.disabled = true;
+            try {
+              await api(`/api/templates/${t.id}`, { method: 'DELETE' });
+              row.remove();
+              [...tmplSel.options].find(o => o.value === String(t.id))?.remove();
+              toast('Sjabloon verwijderd');
+            } catch (err) { e.target.disabled = false; toast(err.message); }
+          },
+        }, '✕'),
+      );
+      listEl.append(row);
+    }
+    manageCard = el('div', { class: 'card' },
+      el('h2', { style: 'margin-top: 0' }, 'Mijn sjablonen'),
+      el('p', { class: 'muted', style: 'margin-top: 0' },
+        'Een sjabloon maak je op een lijst zelf, met de knop "Sjabloon opslaan".'),
+      listEl,
+    );
+  }
+
+  clear(app);
+  app.append(...[form, manageCard].filter(Boolean));
 }
 
-async function renderEdit(id, epoch) {
+// 'Automatisch vullen': de reisvragen, los van het aanmaken. Antwoorden
+// worden opgeslagen op de checklist; de generator-uitkomst komt terug als
+// keuzelijst met toevoegen- en verwijder-voorstellen.
+async function renderAutoFill(id, epoch) {
   clear(app);
   app.append(el('p', { class: 'loading' }, 'Laden…'));
   let data, countries, family;
@@ -736,14 +717,12 @@ async function renderEdit(id, epoch) {
   if (isStale(epoch)) return;
   const c = data.checklist;
   clear(app);
-  app.append(buildChecklistForm({
-    mode: 'edit',
+  app.append(buildFillForm({
     countries,
     family,
     initial: {
       id: c.id,
       name: c.name,
-      destination: c.destination,
       country: c.country,
       startDate: c.start_date,
       endDate: c.end_date,
@@ -753,8 +732,6 @@ async function renderEdit(id, epoch) {
       accommodation: c.accommodation,
       activities: c.activities,
       rentalCar: c.rental_car,
-      lat: c.lat,
-      lng: c.lng,
     },
     onSubmit: async (formData) => {
       const res = await api(`/api/checklists/${id}`, { method: 'PATCH', body: formData });
@@ -763,7 +740,7 @@ async function renderEdit(id, epoch) {
       if (sug.length || rem.length) {
         renderSuggestions(id, sug, rem);
       } else {
-        toast('Wijzigingen opgeslagen');
+        toast('Je lijst dekt deze reis al — geen nieuwe voorstellen');
         navigate(`#/list/${id}`);
       }
     },
@@ -964,8 +941,11 @@ async function renderChecklist(id, epoch) {
     catCountSpans.clear();
     const visible = visibleItems();
     if (!visible.length) {
-      itemsContainer.append(el('div', { class: 'empty' },
-        items.length ? 'Geen items binnen dit filter.' : 'Nog geen items op deze lijst.'));
+      itemsContainer.append(items.length
+        ? el('div', { class: 'empty' }, 'Geen items binnen dit filter.')
+        : el('div', { class: 'card empty' },
+            el('p', {}, 'Je lijst is nog leeg. Voeg hierboven zelf items toe, of laat hem vullen op basis van je reis:'),
+            el('a', { href: `#/list/${c.id}/vullen`, class: 'btn btn-primary' }, '✨ Automatisch vullen')));
       return;
     }
     const groups = {};
@@ -1257,12 +1237,20 @@ async function renderChecklist(id, epoch) {
       ...[printQr].filter(Boolean),
       el('div', { class: 'head-actions no-print' },
         (() => {
-          if (c.lat == null || c.lng == null) return null;
-          // De knop volgt de content-beschikbaarheid: pas klikbaar als er
-          // écht iets te tonen is. Dankzij de cache (die ook verouderde
-          // versies direct serveert) is dat vrijwel altijd meteen; alleen
-          // een gloednieuwe locatie moet eerst voorbereid worden — dan
-          // legt de knop uit waarom hij nog even wacht.
+          // Zonder kaartlocatie leidt de knop naar de kaart-stap van de
+          // Omgeving-pagina: de locatie kies je pas wanneer je hem nodig
+          // hebt. Mét locatie volgt de knop de content-beschikbaarheid:
+          // pas klikbaar als er écht iets te tonen is. Dankzij de cache
+          // (die ook verouderde versies direct serveert) is dat vrijwel
+          // altijd meteen; alleen een gloednieuwe locatie moet eerst
+          // voorbereid worden — dan legt de knop uit waarom hij wacht.
+          if (c.lat == null || c.lng == null) {
+            return el('a', {
+              href: `#/list/${c.id}/omgeving`,
+              class: 'btn btn-sm',
+              title: 'Kies je bestemming op de kaart en verken de omgeving',
+            }, '🗺 Omgeving');
+          }
           const btn = el('a', {
             href: `#/list/${c.id}/omgeving`,
             class: 'btn btn-sm',
@@ -1296,7 +1284,19 @@ async function renderChecklist(id, epoch) {
           check();
           return btn;
         })(),
-        el('a', { href: `#/list/${c.id}/edit`, class: 'btn btn-sm' }, 'Aanpassen'),
+        el('a', { href: `#/list/${c.id}/vullen`, class: 'btn btn-sm' }, '✨ Automatisch vullen'),
+        el('button', {
+          class: 'btn btn-sm',
+          title: 'Bewaar deze lijst als herbruikbaar sjabloon voor volgende vakanties',
+          onclick: async () => {
+            const name = prompt('Naam voor het sjabloon:', c.name);
+            if (name == null || !name.trim()) return;
+            try {
+              await api('/api/templates', { method: 'POST', body: { checklistId: c.id, name } });
+              toast('Sjabloon opgeslagen — je vindt het bij "Nieuwe checklist"');
+            } catch (err) { toast(err.message); }
+          },
+        }, 'Sjabloon opslaan'),
         el('button', {
           class: 'btn btn-sm',
           onclick: async () => {
@@ -1447,6 +1447,130 @@ function fitsTravelers(catKey, travelers) {
   }
 }
 
+// Kaart-stap van de Omgeving-pagina: de bestemming kies je pas op het
+// moment dat je hem nodig hebt — niet al bij het aanmaken van de lijst.
+// Opslaan zet lat/lng (en plaats + land) op de checklist en laadt daarna
+// de omgeving; land en plaats voeden later ook 'Automatisch vullen'.
+function renderPickLocation(id, c, epoch) {
+  let pickedLat = null;
+  let pickedLng = null;
+  let pickedPlace = '';
+  let pickedCountry = '';
+
+  const mapDiv = el('div', { class: 'map-box' });
+  const searchIn = el('input', { type: 'text', placeholder: 'Zoek je bestemming… (bv. Emmen of Salou)' });
+  const results = el('div', { class: 'map-results' });
+  const chosenLine = el('p', { class: 'muted', style: 'margin: 6px 0 0' },
+    'Zoek hierboven of klik op de kaart.');
+  const saveBtn = el('button', { class: 'btn btn-primary', disabled: true }, 'Opslaan en omgeving verkennen');
+
+  function setChosen() {
+    chosenLine.textContent = pickedPlace
+      ? `Gekozen bestemming: ${pickedPlace}`
+      : 'Locatie gekozen — sla op om de omgeving te verkennen.';
+    saveBtn.disabled = false;
+  }
+
+  let leafletMap = null;
+  let marker = null;
+  function setMarker(lat, lng, pan) {
+    pickedLat = lat; pickedLng = lng;
+    if (!leafletMap) return;
+    if (!marker) marker = L.marker([lat, lng]).addTo(leafletMap);
+    else marker.setLatLng([lat, lng]);
+    if (pan) leafletMap.setView([lat, lng], Math.max(leafletMap.getZoom(), 9));
+  }
+
+  function initMap() {
+    if (typeof L === 'undefined') {
+      mapDiv.textContent = 'Kaart kon niet geladen worden — zoeken hierboven werkt wel.';
+      return;
+    }
+    leafletMap = L.map(mapDiv).setView([52.2, 5.3], 6);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '&copy; OpenStreetMap-bijdragers',
+    }).addTo(leafletMap);
+    leafletMap.on('click', async (e) => {
+      setMarker(e.latlng.lat, e.latlng.lng, false);
+      pickedPlace = '';
+      setChosen();
+      try {
+        const r = await api(`/api/geo/reverse?lat=${e.latlng.lat}&lng=${e.latlng.lng}`);
+        if (r.place) pickedPlace = r.place;
+        if (r.country) pickedCountry = r.country;
+        setChosen();
+      } catch { /* zonder plaatsnaam kan opslaan ook */ }
+    });
+    // Leaflet meet de container pas goed als hij zichtbaar is.
+    setTimeout(() => leafletMap.invalidateSize(), 100);
+  }
+  setTimeout(initMap, 0);
+
+  let searchTimer = null;
+  searchIn.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    const q = searchIn.value.trim();
+    if (q.length < 2) { clear(results); return; }
+    searchTimer = setTimeout(async () => {
+      try {
+        const r = await api(`/api/geo/search?q=${encodeURIComponent(q)}`);
+        clear(results);
+        for (const hit of r.results) {
+          results.append(el('button', {
+            type: 'button', class: 'map-result',
+            onclick: () => {
+              clear(results);
+              searchIn.value = hit.place || hit.label;
+              pickedPlace = hit.place || hit.label;
+              if (hit.country) pickedCountry = hit.country;
+              setMarker(hit.lat, hit.lng, true);
+              setChosen();
+            },
+          }, hit.label));
+        }
+      } catch { /* zoeken faalt stil; kaartklik werkt nog */ }
+    }, 400);
+  });
+
+  saveBtn.addEventListener('click', async () => {
+    if (pickedLat == null) return;
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Opslaan…';
+    try {
+      // Eventuele paklijst-voorstellen door het gewijzigde land tonen we
+      // hier bewust niet — daarvoor is 'Automatisch vullen'.
+      await api(`/api/checklists/${id}`, {
+        method: 'PATCH',
+        body: {
+          lat: pickedLat,
+          lng: pickedLng,
+          destination: pickedPlace || c.destination || '',
+          country: pickedCountry || c.country || '',
+        },
+      });
+      render(); // opnieuw renderen: nu is er een locatie → omgeving laden
+    } catch (err) {
+      toast(err.message);
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Opslaan en omgeving verkennen';
+    }
+  });
+
+  clear(app);
+  app.append(
+    el('a', { href: `#/list/${id}`, class: 'btn btn-sm btn-ghost' }, '← Terug'),
+    el('h1', { style: 'margin-top: 8px' }, 'Waar ga je heen?'),
+    el('p', { class: 'muted' },
+      'Kies je bestemming op de kaart, dan laten we zien wat er in de buurt te doen is. ',
+      'De plaats en het land komen ook op je checklist te staan.'),
+    el('div', { class: 'card spaced' },
+      el('div', { class: 'field' }, searchIn, results, mapDiv, chosenLine),
+      el('div', { class: 'actions' }, saveBtn),
+    ),
+  );
+}
+
 async function renderOmgeving(id, epoch) {
   clear(app);
   app.append(el('p', { class: 'loading' },
@@ -1457,10 +1581,7 @@ async function renderOmgeving(id, epoch) {
     if (isStale(epoch)) return;
     const c0 = data.checklist;
     if (c0.lat == null || c0.lng == null) {
-      clear(app);
-      return app.append(el('div', { class: 'card empty' },
-        'Deze checklist heeft nog geen kaartlocatie. ',
-        el('a', { href: `#/list/${id}/edit` }, 'Kies eerst je bestemming op de kaart.')));
+      return renderPickLocation(id, c0, epoch);
     }
     geo = await api(`/api/geo/nearby?lat=${c0.lat}&lng=${c0.lng}`);
   } catch (err) {
@@ -1674,8 +1795,9 @@ async function render() {
   if (hash === '#/login') return renderAuth();
   if (hash === '#/' || hash === '#') return renderDashboard(epoch);
   if (hash === '#/new') return renderNew(epoch);
-  const editM = hash.match(/^#\/list\/(\d+)\/edit$/);
-  if (editM) return renderEdit(editM[1], epoch);
+  // /edit is de oude naam van deze pagina — oude bladwijzers blijven werken.
+  const fillM = hash.match(/^#\/list\/(\d+)\/(vullen|edit)$/);
+  if (fillM) return renderAutoFill(fillM[1], epoch);
   const geoM = hash.match(/^#\/list\/(\d+)\/omgeving$/);
   if (geoM) return renderOmgeving(geoM[1], epoch);
   if (hash === '#/gezin') return renderFamily(epoch);

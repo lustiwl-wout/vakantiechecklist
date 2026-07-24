@@ -76,74 +76,54 @@ function cleanQuantities(input) {
   return out;
 }
 
+// Aanmaken is bewust minimaal: een naam en eventueel een sjabloon als
+// startpunt. De lijst begint verder leeg — vullen kan handmatig of via
+// de pagina 'Automatisch vullen' (PATCH + voorstellen).
 router.post('/', async (req, res) => {
-  const {
-    name, destination, country, startDate, endDate,
-    travelers, transport, weather, accommodation,
-    activities, medications, quantities, rentalCar,
-    lat, lng,
-  } = req.body || {};
-
+  const { name, templateId } = req.body || {};
   if (!name || !String(name).trim()) {
     return res.status(400).json({ error: 'Naam is verplicht' });
   }
-  if (startDate && endDate && endDate < startDate) {
-    return res.status(400).json({ error: 'De terugkomstdatum ligt vóór de vertrekdatum' });
-  }
 
-  const ct = cleanTravelers(travelers);
-  const ca = Array.isArray(activities) ? [...new Set(activities.map(String))] : [];
-  const cw = cleanWeather(weather);
-  const cm = Array.isArray(medications)
-    ? medications.map(m => String(m || '').trim()).filter(Boolean).slice(0, 50)
-    : [];
-  const cq = cleanQuantities(quantities);
-  const cc = getCountry(country) ? String(country).toLowerCase() : null;
-  const rc = rentalCar === true;
-  const cleanCoord = (v, max) => (Number.isFinite(Number(v)) && Math.abs(Number(v)) <= max) ? Number(v) : null;
-  const clat = cleanCoord(lat, 90);
-  const clng = cleanCoord(lng, 180);
+  let snapshot = [];
+  if (templateId != null && templateId !== '') {
+    const { rows } = await pool.query(
+      'SELECT items FROM templates WHERE id = $1 AND user_id = $2',
+      [Number(templateId) || 0, req.userId]
+    );
+    if (!rows[0]) return res.status(404).json({ error: 'Sjabloon niet gevonden' });
+    snapshot = Array.isArray(rows[0].items) ? rows[0].items : [];
+  }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      `INSERT INTO checklists (user_id, name, destination, country, start_date, end_date, travelers, transport, weather, accommodation, activities, rental_car, lat, lng)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11::jsonb, $12, $13, $14)
-       RETURNING *`,
-      [
-        req.userId,
-        String(name).trim(),
-        destination || null,
-        cc,
-        startDate || null,
-        endDate || null,
-        JSON.stringify(ct),
-        transport || null,
-        JSON.stringify(cw),
-        accommodation || null,
-        JSON.stringify(ca),
-        rc,
-        clat,
-        clng,
-      ]
+      'INSERT INTO checklists (user_id, name) VALUES ($1, $2) RETURNING *',
+      [req.userId, String(name).trim()]
     );
     const checklist = rows[0];
 
-    const generated = generateItems({
-      destination, country: cc, startDate, endDate,
-      travelers: ct, transport, weather: cw,
-      accommodation, activities: ca,
-      medications: cm, quantities: cq, rentalCar: rc,
-    });
+    const copies = snapshot
+      .map(it => ({
+        text: String((it && it.text) || '').trim().slice(0, 200),
+        category: (it && it.category) ? String(it.category).slice(0, 60) : 'Overig',
+        quantity: (Number.isInteger(Number(it && it.quantity)) && it.quantity >= 1 && it.quantity <= 99)
+          ? Number(it.quantity) : 1,
+        traveler: (it && typeof it.traveler === 'string' && it.traveler.trim())
+          ? it.traveler.trim().slice(0, 60) : null,
+        origin: (it && it.origin === 'generated') ? 'generated' : 'user',
+      }))
+      .filter(it => it.text)
+      .slice(0, 500);
 
-    if (generated.length) {
+    if (copies.length) {
       const values = [];
       const params = [];
-      generated.forEach((it, idx) => {
-        const base = idx * 6;
-        params.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, 'generated')`);
-        values.push(checklist.id, it.text, it.category, it.position, it.quantity || 1, it.traveler || null);
+      copies.forEach((it, idx) => {
+        const base = idx * 7;
+        params.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`);
+        values.push(checklist.id, it.text, it.category, idx, it.quantity, it.traveler, it.origin);
       });
       await client.query(
         `INSERT INTO items (checklist_id, text, category, position, quantity, traveler, origin) VALUES ${params.join(', ')}`,
@@ -152,8 +132,6 @@ router.post('/', async (req, res) => {
     }
 
     await client.query('COMMIT');
-    // Omgevingsdata alvast op de achtergrond laden (niet op wachten).
-    if (clat != null && clng != null) prefetchNearby(clat, clng);
     res.json({ checklist });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -224,10 +202,20 @@ router.patch('/:id', async (req, res) => {
     params.push(JSON.stringify(Array.isArray(req.body.activities) ? [...new Set(req.body.activities.map(String))] : []));
   }
 
-  if (!updates.length) return res.json({ ok: true, suggestions: [], removals: [] });
-  updates.push('updated_at = NOW()');
-  params.push(checklist.id);
-  await pool.query(`UPDATE checklists SET ${updates.join(', ')} WHERE id = $${p}`, params);
+  // Medicijnen en kleding-hoeveelheden worden niet als kolom bewaard —
+  // ze sturen alleen de generator voor de voorstellen hieronder.
+  const cm = Array.isArray(req.body.medications)
+    ? req.body.medications.map(m => String(m || '').trim()).filter(Boolean).slice(0, 50)
+    : [];
+  const cq = cleanQuantities(req.body.quantities);
+  const wantsSuggestions = 'medications' in req.body || 'quantities' in req.body;
+
+  if (!updates.length && !wantsSuggestions) return res.json({ ok: true, suggestions: [], removals: [] });
+  if (updates.length) {
+    updates.push('updated_at = NOW()');
+    params.push(checklist.id);
+    await pool.query(`UPDATE checklists SET ${updates.join(', ')} WHERE id = $${p}`, params);
+  }
 
   // Nieuwe of gewijzigde kaartlocatie? Omgevingsdata alvast voorladen.
   if ('lat' in req.body && 'lng' in req.body) {
@@ -264,7 +252,7 @@ router.patch('/:id', async (req, res) => {
   const removedTexts = new Set(Array.isArray(cur.removed_texts) ? cur.removed_texts : []);
 
   const oldTexts = new Set(generateItems(genInput(checklist)).map(it => norm(it.text)));
-  const newGenerated = generateItems(genInput(cur));
+  const newGenerated = generateItems({ ...genInput(cur), medications: cm, quantities: cq });
   const newTexts = new Set(newGenerated.map(it => norm(it.text)));
 
   const suggestions = newGenerated

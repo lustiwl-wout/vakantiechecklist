@@ -70,6 +70,14 @@ async function init() {
       fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    CREATE TABLE IF NOT EXISTS templates (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      items JSONB NOT NULL DEFAULT '[]',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    );
+
     CREATE TABLE IF NOT EXISTS family_members (
       id SERIAL PRIMARY KEY,
       user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -81,6 +89,7 @@ async function init() {
     CREATE INDEX IF NOT EXISTS idx_checklists_user ON checklists(user_id);
     CREATE INDEX IF NOT EXISTS idx_items_checklist ON items(checklist_id);
     CREATE INDEX IF NOT EXISTS idx_family_user ON family_members(user_id);
+    CREATE INDEX IF NOT EXISTS idx_templates_user ON templates(user_id);
   `);
 
   // Migratie: weather van TEXT naar JSONB (multi-select).
