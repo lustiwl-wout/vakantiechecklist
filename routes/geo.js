@@ -1,15 +1,14 @@
 // Geo-diensten:
-//  - /search  → Nominatim (OSM): plaats zoeken voor de kaart-picker
-//  - /reverse → Nominatim (OSM): coördinaat → plaats + land
+//  - /search  → Nominatim: plaats zoeken voor de kaart-picker
+//  - /reverse → Nominatim: coördinaat → plaats + land
 //  - /nearby  → Google Places: uitjes in de omgeving, mét sterren
-//  - buurlanden binnen 30 km via een piepkleine Overpass-query
+//  - buurlanden binnen ± 30 km via Nominatim-landpeiling
 //
 // De omgevingsdata komt volledig uit Google Places (New): één
 // zoekopdracht per categorie levert namen, sterren én locaties in één
-// keer. Dat is betrouwbaarder én goedkoper dan de oude route (OSM-data
-// ophalen en daarna per getoond uitje een losse sterren-opzoeking).
-// Nominatim en Overpass blijven alleen voor geocoding en de
-// landsgrens-detectie — kleine, goedkope verzoeken.
+// keer. Nominatim (stabiel en gratis) doet alleen geocoding en de
+// buurland-peiling; Overpass is volledig uitgefaseerd — de timeouts
+// en 429's kwamen allemaal daarvandaan.
 
 const express = require('express');
 const { requireAuth } = require('../auth');
@@ -21,17 +20,6 @@ router.use(requireAuth);
 
 const UA = 'vakantiechecklist (persoonlijk hobbyproject; contact via repository)';
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
-const OVERPASS_ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-  'https://overpass.osm.jp/api/interpreter',
-];
-
-// Server die ons een 429 gaf ('te veel verzoeken') even links laten
-// liggen — doorrammen verlengt de straf alleen maar.
-const endpointBackoff = new Map(); // endpoint → timestamp tot wanneer
-const ENDPOINT_BACKOFF_MS = 10 * 60 * 1000;
 
 // ---- cache: memory (L1) + database (L2, overleeft Render-herstarts) ----
 
@@ -83,32 +71,6 @@ async function nominatimFetch(path) {
   });
   if (!res.ok) throw new Error(`Nominatim ${res.status}`);
   return res.json();
-}
-
-async function overpassFetch(query, clientTimeoutMs = 20000) {
-  let lastErr = null;
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    if (Date.now() < (endpointBackoff.get(endpoint) || 0)) continue;
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(query),
-        signal: AbortSignal.timeout(clientTimeoutMs),
-      });
-      if (!res.ok) throw new Error(`Overpass ${res.status} (${endpoint})`);
-      return await res.json();
-    } catch (err) {
-      lastErr = err;
-      if (/\b429\b/.test(err.message)) {
-        endpointBackoff.set(endpoint, Date.now() + ENDPOINT_BACKOFF_MS);
-        console.warn('[geo] 429 van', endpoint, '— 10 minuten op het strafbankje');
-      } else {
-        console.warn('[geo] endpoint faalde, probeer volgende:', endpoint, '-', err.message);
-      }
-    }
-  }
-  throw lastErr || new Error('Alle kaartservers zitten in de afkoelperiode');
 }
 
 // ---- helpers ----
@@ -347,44 +309,53 @@ const PLACES_CATEGORIES = [
   { key: 'restaurant', label: 'Restaurants', ages: 'alle leeftijden', activity: 'nightlife', radiusKm: 8, types: ['restaurant'] },
 ];
 
-// ---- buurlanden (piepkleine Overpass-query) ----
+// ---- buurlanden (Nominatim-landpeiling) ----
 
-// Overpass-werk in een rij: máx één query tegelijk vanaf dit IP.
-let overpassQueue = Promise.resolve();
-function queuedOverpass(fn) {
-  const run = overpassQueue.then(fn, fn);
-  overpassQueue = run.catch(() => {});
-  return run;
-}
-
-// null = onbekend (query mislukt) — dan houden we een eerdere waarde aan.
-async function fetchNeighbours(lat, lng) {
-  try {
-    const data = await queuedOverpass(() => overpassFetch(
-      `[out:json][timeout:15];
-way["boundary"="administrative"]["admin_level"="2"](around:30000,${lat},${lng});
-rel(bw)["boundary"="administrative"]["admin_level"="2"];
-out tags 10;`, 20000));
-    return [...new Set((data.elements || [])
-      .map(e => String((e.tags || {})['ISO3166-1'] || '').toLowerCase())
-      .filter(Boolean))];
-  } catch (err) {
-    console.warn('[geo/borders] grens-detectie mislukt (niet blokkerend):', err.message);
-    return null;
+// 12 punten op een cirkel van 28 km rond de bestemming omgekeerd
+// geocoderen (landniveau): elk land dat je raakt is een buurland-hint.
+// Traag maar gratis en betrouwbaar — draait uitsluitend op de
+// achtergrond, dus niemand wacht erop.
+async function neighboursViaNominatim(lat, lng) {
+  const codes = new Set();
+  for (let i = 0; i < 12; i++) {
+    const ang = (i / 12) * 2 * Math.PI;
+    const pLat = lat + (28 / 111) * Math.cos(ang);
+    const pLng = lng + (28 / (111 * Math.max(0.2, Math.cos(lat * Math.PI / 180)))) * Math.sin(ang);
+    try {
+      const r = await nominatimFetch(
+        `/reverse?format=jsonv2&zoom=3&accept-language=nl&lat=${pLat.toFixed(4)}&lon=${pLng.toFixed(4)}`
+      );
+      const code = String((r.address && r.address.country_code) || '').toLowerCase();
+      if (code) codes.add(code);
+    } catch { /* zee of storing: punt overslaan */ }
   }
+  return codes.size ? [...codes] : null;
 }
 
-function retryNeighboursLater(lat, lng, attempt = 1) {
-  if (attempt > 3) return;
-  setTimeout(async () => {
-    const nb = await fetchNeighbours(lat, lng);
-    if (nb === null) return retryNeighboursLater(lat, lng, attempt + 1);
-    const hit = await cacheGetAny(nearbyKey(lat, lng), TTL_NEARBY);
-    if (hit && hit.data && hit.data.cats) {
-      await cacheSet(nearbyKey(lat, lng), { ...hit.data, neighbours: nb });
-      console.log('[geo/borders] buurlanden alsnog opgeslagen voor', nearbyKey(lat, lng));
-    }
-  }, attempt * 10 * 60 * 1000);
+const resolveNeighbours = neighboursViaNominatim;
+
+// Losgekoppeld van het laden: de omgeving hoeft nooit op de grens-
+// detectie te wachten. Zodra er een uitkomst is wordt het cache-record
+// bijgewerkt; bij falen volgen herkansingen.
+const neighboursInFlight = new Set();
+function updateNeighboursLater(lat, lng, attempt = 1) {
+  const key = nearbyKey(lat, lng);
+  if (neighboursInFlight.has(key)) return;
+  neighboursInFlight.add(key);
+  resolveNeighbours(lat, lng)
+    .then(async nb => {
+      if (nb === null) {
+        if (attempt < 3) setTimeout(() => updateNeighboursLater(lat, lng, attempt + 1), attempt * 10 * 60 * 1000);
+        return;
+      }
+      const hit = await cacheGetAny(key, TTL_NEARBY);
+      if (hit && hit.data && hit.data.cats) {
+        await cacheSet(key, { ...hit.data, neighbours: nb });
+        console.log('[geo/borders] buurlanden opgeslagen voor', key, '→', nb.join(', ') || '(geen)');
+      }
+    })
+    .catch(err => console.warn('[geo/borders]', err.message))
+    .finally(() => neighboursInFlight.delete(key));
 }
 
 // ---- omgeving ophalen en cachen ----
@@ -445,18 +416,19 @@ async function fetchNearbyRaw(lat, lng) {
     cats[def.key] = [...byName.values()];
   }
 
+  // Buurlanden komen asynchroon: het laden wacht er nooit op. Een
+  // eerdere waarde blijft staan; ontbreekt die, dan vult de peiling op
+  // de achtergrond het cache-record aan (belangrijk voor het
+  // milieuvignet bij grens-bestemmingen).
   const prev = await cacheGetAny(nearbyKey(lat, lng), TTL_NEARBY);
-  const nb = await fetchNeighbours(lat, lng);
+  const prevNb = (prev && prev.data && Array.isArray(prev.data.neighbours)) ? prev.data.neighbours : null;
   const raw = {
     v: PLACES_VERSION,
     cats,
-    neighbours: nb ?? ((prev && prev.data && Array.isArray(prev.data.neighbours)) ? prev.data.neighbours : []),
+    neighbours: prevNb || [],
   };
   await cacheSet(nearbyKey(lat, lng), raw);
-  // Grens-detectie mislukt? Op de achtergrond opnieuw proberen en het
-  // cache-record bijwerken — anders mist een nieuwe locatie bij de
-  // grens 30 dagen lang de buurland-hint (milieuvignet).
-  if (nb === null) retryNeighboursLater(lat, lng);
+  if (!prevNb || !prevNb.length) updateNeighboursLater(lat, lng);
   const total = Object.values(cats).reduce((n, a) => n + a.length, 0);
   console.log(`[geo/cache] omgeving opgeslagen (Places): ${nearbyKey(lat, lng)} (${total} plekken)`);
   return raw;
@@ -581,6 +553,11 @@ router.get('/nearby', async (req, res) => {
   // Vernieuwen-knop (refresh=1) wacht op verse data.
   if (!refresh && usable) {
     if (!cached.fresh || !currentVersion(cached)) backgroundRefresh(c.lat, c.lng);
+    // Buurlanden nog onbekend (bv. de peiling was eerder mislukt)?
+    // Alsnog op de achtergrond aanvullen.
+    if (!Array.isArray(cached.data.neighbours) || !cached.data.neighbours.length) {
+      updateNeighboursLater(c.lat, c.lng);
+    }
     return res.json(buildPayload(c.lat, c.lng, cached.data));
   }
 
