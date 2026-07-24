@@ -22,7 +22,13 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.osm.jp/api/interpreter',
 ];
+
+// Server die ons een 429 gaf ('te veel verzoeken') even links laten
+// liggen — doorrammen verlengt de straf alleen maar.
+const endpointBackoff = new Map(); // endpoint → timestamp tot wanneer
+const ENDPOINT_BACKOFF_MS = 10 * 60 * 1000;
 
 // ---- cache: memory (L1) + database (L2, overleeft Render-herstarts) ----
 
@@ -79,6 +85,7 @@ async function nominatimFetch(path) {
 async function overpassFetch(query, clientTimeoutMs = 30000) {
   let lastErr = null;
   for (const endpoint of OVERPASS_ENDPOINTS) {
+    if (Date.now() < (endpointBackoff.get(endpoint) || 0)) continue;
     try {
       const res = await fetch(endpoint, {
         method: 'POST',
@@ -96,10 +103,15 @@ async function overpassFetch(query, clientTimeoutMs = 30000) {
       return data;
     } catch (err) {
       lastErr = err;
-      console.warn('[geo] endpoint faalde, probeer volgende:', endpoint, '-', err.message);
+      if (/\b429\b/.test(err.message)) {
+        endpointBackoff.set(endpoint, Date.now() + ENDPOINT_BACKOFF_MS);
+        console.warn('[geo] 429 van', endpoint, '— 10 minuten op het strafbankje');
+      } else {
+        console.warn('[geo] endpoint faalde, probeer volgende:', endpoint, '-', err.message);
+      }
     }
   }
-  throw lastErr;
+  throw lastErr || new Error('Alle kaartservers zitten in de afkoelperiode');
 }
 
 // ---- helpers ----
@@ -255,7 +267,7 @@ const HEAVY_SELECTORS = new Set([
   '["natural"="water"]["wikipedia"]',
 ]);
 
-function buildOverpassQuery(lat, lng, timeoutS = 25, lite = false) {
+function buildOverpassQuery(lat, lng, timeoutS = 25, lite = false, cats = POI_CATEGORIES, withBorder = true) {
   // Een globale bounding box maakt de query fundamenteel goedkoop: elke
   // tag-zoekopdracht blijft binnen het 35km-gebied in plaats van tegen
   // wereldwijde indexen aan te lopen. Zonder bbox viel de eerste
@@ -270,18 +282,18 @@ function buildOverpassQuery(lat, lng, timeoutS = 25, lite = false) {
   // tag (swimming_pool: elk benoemd bassin) de categorie-limiet voordat
   // de andere tag-soorten aan de beurt zijn, en valt bv. een bosbad
   // verderop achter de afkap.
-  const blocks = POI_CATEGORIES.flatMap(c =>
+  const blocks = cats.flatMap(c =>
     c.selectors
       .filter(s => !lite || !HEAVY_SELECTORS.has(s))
       .map(s =>
         `(\n  nwr${s}["name"](around:${c.radiusKm * 1000},${lat},${lng});\n);\nout center ${c.cap};`
       )
   ).join('\n');
+  const border = withBorder
+    ? `\nway["boundary"="administrative"]["admin_level"="2"](around:30000,${lat},${lng});\nrel(bw)["boundary"="administrative"]["admin_level"="2"];\nout tags 10;`
+    : '';
   return `[out:json][timeout:${timeoutS}][bbox:${bbox}];
-${blocks}
-way["boundary"="administrative"]["admin_level"="2"](around:30000,${lat},${lng});
-rel(bw)["boundary"="administrative"]["admin_level"="2"];
-out tags 10;`;
+${blocks}${border}`;
 }
 
 function classify(el) {
@@ -602,9 +614,36 @@ async function fetchNearbyRawNow(lat, lng, opts = {}) {
     // geval íets te tonen valt. partial=true zorgt dat de volledige
     // query op de achtergrond opnieuw geprobeerd blijft worden.
     console.warn('[geo/nearby] volledige query mislukt, probeer lichte variant:', err.message);
-    data = opts.patient
-      ? await overpassFetch(buildOverpassQuery(lat, lng, 40, true), 50000)
-      : await overpassFetch(buildOverpassQuery(lat, lng, 20, true), 25000);
+    try {
+      data = opts.patient
+        ? await overpassFetch(buildOverpassQuery(lat, lng, 40, true), 50000)
+        : await overpassFetch(buildOverpassQuery(lat, lng, 20, true), 25000);
+    } catch (err2) {
+      // Laatste redmiddel: de lichte query in drie stukken — kleine
+      // queries lukken vrijwel altijd, ook op drukke servers en in de
+      // dichtste steden. Eén geslaagd deel is genoeg om iets te tonen.
+      console.warn('[geo/nearby] lichte variant mislukte ook, probeer in delen:', err2.message);
+      const chunks = [
+        POI_CATEGORIES.slice(0, 4),
+        POI_CATEGORIES.slice(4, 8),
+        POI_CATEGORIES.slice(8),
+      ];
+      const els = [];
+      let okCount = 0;
+      for (let i = 0; i < chunks.length; i++) {
+        try {
+          const part = await overpassFetch(
+            buildOverpassQuery(lat, lng, 20, true, chunks[i], i === chunks.length - 1), 25000);
+          els.push(...(part.elements || []));
+          okCount++;
+        } catch (e) {
+          console.warn(`[geo/nearby] deel ${i + 1}/${chunks.length} mislukt:`, e.message);
+        }
+      }
+      if (!okCount) throw err2;
+      console.log(`[geo/nearby] ${okCount}/${chunks.length} delen gelukt`);
+      data = { elements: els };
+    }
     partial = true;
   }
 
