@@ -122,6 +122,57 @@ function el(tag, attrs = {}, ...children) {
 
 function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
+// Keuzeveld met een '+ Nieuw…'-optie die omschakelt naar vrij typen.
+// Een datalist lijkt hetzelfde te kunnen, maar browsers filteren die
+// lijst op de ingevulde waarde — met een gekozen naam in het veld viel
+// er dus niets meer te kiezen. Een echte dropdown heeft dat niet.
+function comboField({ options, value = '', emptyLabel, newLabel, ariaLabel, className }) {
+  const NEW = '__nieuw__';
+  const select = el('select', { 'aria-label': ariaLabel, class: className || '' });
+  const input = el('input', {
+    type: 'text', maxlength: '60', hidden: true,
+    placeholder: newLabel.replace(/^\+ /, ''), 'aria-label': ariaLabel, class: className || '',
+  });
+  let typing = false;
+
+  function paintOptions(current) {
+    clear(select);
+    select.append(el('option', { value: '' }, emptyLabel));
+    const opts = options();
+    for (const o of opts) select.append(el('option', { value: o }, o));
+    if (current && !opts.includes(current)) select.append(el('option', { value: current }, current));
+    select.append(el('option', { value: NEW }, newLabel));
+    select.value = current || '';
+  }
+  paintOptions(value);
+
+  const backToSelect = (v) => {
+    typing = false;
+    input.hidden = true;
+    select.hidden = false;
+    paintOptions(v || '');
+  };
+  select.addEventListener('change', () => {
+    if (select.value !== NEW) return;
+    typing = true;
+    input.value = '';
+    select.hidden = true;
+    input.hidden = false;
+    input.focus();
+  });
+  input.addEventListener('blur', () => { if (!input.value.trim()) backToSelect(''); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); backToSelect(''); }
+  });
+
+  return {
+    root: el('span', { class: 'combo' }, select, input),
+    getValue() { return typing ? input.value.trim() : select.value; },
+    setValue(v) { backToSelect(v); },
+    refresh() { if (!typing) paintOptions(select.value); },
+  };
+}
+
 let toastTimer = null;
 function toast(msg) {
   toastEl.textContent = msg;
@@ -1029,7 +1080,7 @@ async function renderChecklist(id, epoch) {
           chips.querySelectorAll('.chip').forEach(x => x.classList.remove('active'));
           btn.classList.add('active');
           // 'Voor wie?' in het toevoeg-formulier volgt de actieve tab.
-          newItemTrav.value = (value && value !== '__shared__') ? value : '';
+          newItemTrav.setValue((value && value !== '__shared__') ? value : '');
           paintItems();
         },
       }, label);
@@ -1270,24 +1321,21 @@ async function renderChecklist(id, epoch) {
     if (!li || li.querySelector('.item-editor')) return;
 
     const textIn = el('input', { type: 'text', value: item.text, maxlength: '200' });
-    // Vrij invulveld met suggesties, net als bij toevoegen: een nieuwe
-    // naam maakt de reiziger aan. Leeg = algemeen.
-    const travSel = el('input', {
-      type: 'text', list: travListId, value: item.traveler || '',
-      placeholder: 'Algemeen', title: 'Kies een reiziger of typ een nieuwe naam. Leeg = algemeen.',
+    // Dezelfde dropdown-met-'+ Nieuw…' als het toevoeg-formulier.
+    const travSel = comboField({
+      options: allTravelerNames, value: item.traveler || '',
+      emptyLabel: 'Algemeen', newLabel: '+ Nieuwe reiziger…', ariaLabel: 'Voor wie',
     });
-    // Zelfde vrije categorie-invoer als het toevoeg-formulier: kies uit
-    // wat er is, of typ een nieuwe.
-    const catSel = el('input', {
-      type: 'text', list: catListId, value: item.category || '',
-      placeholder: 'Categorie', title: 'Kies een categorie of typ een nieuwe',
+    const catSel = comboField({
+      options: usedCategories, value: item.category || '',
+      emptyLabel: 'Overig', newLabel: '+ Nieuwe categorie…', ariaLabel: 'Categorie',
     });
 
     const editor = el('li', { class: 'item-editor no-print' },
       el('div', { class: 'field' }, el('label', {}, 'Item'), textIn),
       (useTrav || useCats) ? el('div', { class: 'row cols-2' },
-        useTrav ? el('div', { class: 'field' }, el('label', {}, 'Voor wie'), travSel) : null,
-        useCats ? el('div', { class: 'field' }, el('label', {}, 'Categorie'), catSel) : null,
+        useTrav ? el('div', { class: 'field' }, el('label', {}, 'Voor wie'), travSel.root) : null,
+        useCats ? el('div', { class: 'field' }, el('label', {}, 'Categorie'), catSel.root) : null,
       ) : null,
       el('div', { class: 'actions' },
         el('button', { type: 'button', class: 'btn btn-sm', onclick: () => editor.remove() }, 'Annuleren'),
@@ -1300,11 +1348,11 @@ async function renderChecklist(id, epoch) {
                 method: 'PATCH',
                 body: {
                   text: textIn.value.trim() || item.text,
-                  traveler: normTraveler(travSel.value) || null,
-                  category: catSel.value.trim() || 'Overig',
+                  traveler: normTraveler(travSel.getValue()) || null,
+                  category: catSel.getValue().trim() || 'Overig',
                 },
               });
-              if (normTraveler(travSel.value)) await ensureTraveler(normTraveler(travSel.value));
+              if (normTraveler(travSel.getValue())) await ensureTraveler(normTraveler(travSel.getValue()));
               Object.assign(item, res.item);
               paintItems();
               paintProgress();
@@ -1354,30 +1402,27 @@ async function renderChecklist(id, epoch) {
   // Add item form
   const newItemIn = el('input', { type: 'text', placeholder: 'Item toevoegen…' });
   const newItemQty = el('input', { type: 'number', min: '1', max: '99', value: '1', 'aria-label': 'Aantal', class: 'qty-input', title: 'Aantal' });
-  // Categorie is een vrij tekstveld met suggesties uit wat al op de lijst
-  // staat. Typ je iets nieuws, dan bestaat die categorie vanaf dat moment
-  // — er is geen vaste lijst. Leeg laten = Overig.
-  const catListId = `catlist-${c.id}`;
-  const catDatalist = el('datalist', { id: catListId });
-  const newItemCat = el('input', {
-    type: 'text', list: catListId, 'aria-label': 'Categorie', class: 'cat-input',
-    placeholder: 'Categorie', title: 'Kies een categorie of typ een nieuwe',
+  // Categorie en 'voor wie' zijn dropdowns met een '+ Nieuw…'-optie:
+  // kies uit wat er is, of typ iets nieuws — dat bestaat vanaf dat
+  // moment. Leeg laten = Overig respectievelijk Algemeen.
+  function usedCategories() {
+    const used = [...new Set(items.map(i => i.category).filter(Boolean))];
+    used.sort((a, b) => {
+      const ia = CATEGORY_ORDER.indexOf(a); const ib = CATEGORY_ORDER.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b, 'nl');
+    });
+    return used;
+  }
+  const newItemCat = comboField({
+    options: usedCategories, emptyLabel: 'Overig',
+    newLabel: '+ Nieuwe categorie…', ariaLabel: 'Categorie', className: 'cat-input',
   });
-  // 'Voor wie' werkt net als de categorie: vrij tekstveld met suggesties.
-  // Typ je een naam die nog niet bestaat, dan wordt die reiziger
-  // aangemaakt. Leeg laten = algemeen item.
-  const travListId = `travlist-${c.id}`;
-  const travDatalist = el('datalist', { id: travListId });
-  const newItemTrav = el('input', {
-    type: 'text', list: travListId, 'aria-label': 'Voor wie', class: 'cat-input',
-    placeholder: 'Voor wie?', title: 'Kies een reiziger of typ een nieuwe naam. Leeg = algemeen.',
+  const newItemTrav = comboField({
+    options: allTravelerNames, emptyLabel: 'Algemeen',
+    newLabel: '+ Nieuwe reiziger…', ariaLabel: 'Voor wie', className: 'cat-input',
   });
 
-  function paintTravelerOptions() {
-    clear(travDatalist);
-    for (const n of allTravelerNames()) travDatalist.append(el('option', { value: n }));
-  }
-  paintTravelerOptions();
+  function paintTravelerOptions() { newItemTrav.refresh(); }
 
   // 'Algemeen' (en het oudere 'Gedeeld') is het gereserveerde woord voor
   // items zonder eigenaar — wie het intypt bedoelt géén reiziger met die naam.
@@ -1401,16 +1446,7 @@ async function renderChecklist(id, epoch) {
     } catch { /* de naam staat op het item; de reiziger volgt anders later */ }
   }
 
-  function paintCategoryOptions() {
-    const used = [...new Set(items.map(i => i.category).filter(Boolean))];
-    used.sort((a, b) => {
-      const ia = CATEGORY_ORDER.indexOf(a); const ib = CATEGORY_ORDER.indexOf(b);
-      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b, 'nl');
-    });
-    clear(catDatalist);
-    for (const cat of used) catDatalist.append(el('option', { value: cat }));
-  }
-  paintCategoryOptions();
+  function paintCategoryOptions() { newItemCat.refresh(); }
 
   const addForm = el('form', {
     class: 'add-item no-print',
@@ -1418,14 +1454,18 @@ async function renderChecklist(id, epoch) {
       e.preventDefault();
       const text = newItemIn.value.trim();
       if (!text) return;
-      const category = newItemCat.value.trim() || 'Overig';
+      const category = newItemCat.getValue().trim() || 'Overig';
       const quantity = Math.max(1, Math.min(99, Number(newItemQty.value) || 1));
-      const traveler = normTraveler(newItemTrav.value) || undefined;
+      const traveler = normTraveler(newItemTrav.getValue()) || undefined;
       try {
         const res = await api(`/api/checklists/${c.id}/items`, {
           method: 'POST', body: { text, category, quantity, traveler },
         });
         if (traveler) await ensureTraveler(traveler);
+        // Nieuw getypte waarden worden nu een gewone dropdown-keuze,
+        // klaar voor het volgende item.
+        newItemCat.setValue(category === 'Overig' ? '' : category);
+        newItemTrav.setValue(traveler || '');
         items.push(res.item);
         newItemIn.value = '';
         newItemQty.value = '1';
@@ -1437,9 +1477,8 @@ async function renderChecklist(id, epoch) {
     },
   },
     newItemIn, newItemQty,
-    useTrav ? newItemTrav : null,
-    useCats ? newItemCat : null,
-    travDatalist, catDatalist,
+    useTrav ? newItemTrav.root : null,
+    useCats ? newItemCat.root : null,
     el('button', { type: 'submit', class: 'btn btn-primary' }, 'Toevoegen')
   );
 

@@ -558,6 +558,10 @@ textarea { min-height: 80px; resize: vertical; }
 /* Categorie-invoer: vrij tekstveld, maar qua breedte een 'select'. */
 .add-item .cat-input { flex: 0 1 160px; }
 
+/* comboField: wrapper doet niet mee in de layout; select/input zijn
+   zelf de flex-/grid-kinderen. */
+.combo { display: contents; }
+
 /* Sjabloon-editor: één regel per item, wrapt netjes op smalle schermen. */
 .tmpl-row { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; align-items: center; }
 .tmpl-row .tmpl-text { flex: 2 1 200px; min-width: 0; }
