@@ -224,7 +224,11 @@ const POI_CATEGORIES = [
   // binnen de bbox en is dus betaalbaar.
   { key: 'waterpark', selectors: ['["leisure"="water_park"]', '["leisure"="swimming_pool"]', '["leisure"="sports_centre"]["sport"="swimming"]', '["leisure"="sports_centre"]["name"~"zwembad|bosbad|zwemparadijs",i]'], radiusKm: 35, cap: 100, label: 'Zwembaden & waterparken', ages: 'alle leeftijden', activity: 'pool' },
   { key: 'nature', selectors: ['["boundary"="national_park"]', '["leisure"="nature_reserve"]'], radiusKm: 35, cap: 80, label: 'Natuur & wandelgebieden', ages: 'alle leeftijden', activity: 'hiking' },
-  { key: 'museum', selectors: ['["tourism"="museum"]'], radiusKm: 25, cap: 100, label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural', gtype: 'museum' },
+  // Galerieën horen bij musea: het Tate en Rijksmuseum-achtige plekken
+  // staan in OSM als tourism=gallery, niet als museum.
+  { key: 'museum', selectors: ['["tourism"="museum"]', '["tourism"="gallery"]'], radiusKm: 25, cap: 100, label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural', gtype: 'museum' },
+  // Voor stedentrips: theaters en concertzalen.
+  { key: 'theatre', selectors: ['["amenity"="theatre"]'], radiusKm: 20, cap: 60, label: 'Theaters & voorstellingen', ages: 'vanaf ± 6 jaar', activity: 'cultural', gtype: 'performing_arts_theater' },
   { key: 'attraction', selectors: ['["tourism"="attraction"]'], radiusKm: 20, cap: 80, label: 'Bezienswaardigheden & uitjes', ages: 'alle leeftijden', activity: 'daytrip' },
   // Zwemplassen dragen zelden natural=beach: recreatieplassen staan als
   // leisure=beach_resort (dagstrand met voorzieningen) of
@@ -289,7 +293,8 @@ function classify(el) {
       || (t.leisure === 'sports_centre'
           && (t.sport === 'swimming' || /zwembad|bosbad|zwemparadijs/i.test(String(t.name || ''))))) return 'waterpark';
   if (t.boundary === 'national_park' || t.leisure === 'nature_reserve') return 'nature';
-  if (t.tourism === 'museum') return 'museum';
+  if (t.tourism === 'museum' || t.tourism === 'gallery') return 'museum';
+  if (t.amenity === 'theatre') return 'theatre';
   if (t.natural === 'beach' || t.leisure === 'beach_resort' || t.leisure === 'swimming_area'
       || (t.natural === 'water' && t.wikipedia)) return 'beach';
   if (t.amenity === 'restaurant') return 'restaurant';
@@ -370,7 +375,7 @@ function notabilityScore(cat, t) {
 // volstaat; plekken zonder énige metadata (VéFauna) blijven buiten beeld.
 const MIN_SCORE = {
   themepark: 2, zoo: 1, pettingzoo: 1, aquarium: 2, waterpark: 2,
-  museum: 2, attraction: 2, restaurant: 1,
+  museum: 2, attraction: 2, restaurant: 1, theatre: 2,
   nature: 0, beach: 0,
 };
 
@@ -543,7 +548,7 @@ router.get('/reverse', async (req, res) => {
 // dán mist de gecachte ruwe data elementsoorten en is een verse fetch
 // nodig. Filter-/score-wijzigingen vereisen GEEN nieuwe fetch: die
 // draaien bij het lezen over de gecachte ruwe data.
-const QUERY_VERSION = 6;
+const QUERY_VERSION = 7; // v7: theaters + galerieën
 
 function nearbyKey(lat, lng) {
   return `nearby:raw:${lat.toFixed(2)}:${lng.toFixed(2)}`;

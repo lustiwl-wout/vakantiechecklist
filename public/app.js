@@ -2118,6 +2118,7 @@ function fitsTravelers(catKey, travelers) {
     case 'waterpark': return anyKid || anyTeen;
     case 'pettingzoo': return anyYoungKid;
     case 'museum': return anySchoolPlus;
+    case 'theatre': return anySchoolPlus;
     default: return true; // dierentuin, aquarium, strand: iedereen
   }
 }
