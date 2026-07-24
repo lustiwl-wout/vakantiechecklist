@@ -18,8 +18,9 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
-      # Optioneel: Google Places API-sleutel voor sterren bij uitjes op de
-      # Omgeving-pagina. Zonder sleutel simpelweg geen sterren. Beoordelingen
-      # worden 30 dagen gecachet; een maandteller bewaakt het gratis tegoed.
+      # Google Places API-sleutel: de bron van de Omgeving-pagina (uitjes,
+      # sterren, excursies). Zonder sleutel werkt de Omgeving-pagina niet;
+      # de rest van de app wel. Data wordt 30 dagen gecachet (± 16 aanroepen
+      # per locatie per maand); een maandteller bewaakt het gratis tegoed.
       - key: GOOGLE_PLACES_API_KEY
         sync: false
