@@ -690,7 +690,7 @@ async function renderNew(epoch) {
       );
       listEl.append(row);
     }
-    manageCard = el('div', { class: 'card' },
+    manageCard = el('div', { class: 'card', style: 'margin-top: 32px' },
       el('h2', { style: 'margin-top: 0' }, 'Mijn sjablonen'),
       el('p', { class: 'muted', style: 'margin-top: 0' },
         'Een sjabloon maak je op een lijst zelf, met de knop "Sjabloon opslaan".'),
