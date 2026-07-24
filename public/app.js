@@ -192,8 +192,10 @@ async function api(path, opts = {}) {
   try { data = await res.json(); } catch {}
   if (!res.ok) {
     // Sessie verlopen: terug naar het inlogscherm in plaats van losse
-    // foutmeldingen bij elke actie.
-    if (res.status === 401 && location.hash !== '#/login') {
+    // foutmeldingen bij elke actie. Behalve op een gedeelde lijst: die
+    // is openbaar en werkt juist zónder login — de 401 van de
+    // opstart-check (/api/auth/me) mag de kijker daar niet wegsturen.
+    if (res.status === 401 && location.hash !== '#/login' && !location.hash.startsWith('#/share/')) {
       currentUser = null;
       navigate('#/login');
     }
