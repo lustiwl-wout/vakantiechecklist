@@ -305,7 +305,9 @@ const PLACES_CATEGORIES = [
   { key: 'aquarium', label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip', radiusKm: 35, types: ['aquarium'], expectPt: ['aquarium', 'zoo'] },
   { key: 'waterpark', label: 'Zwembaden & waterparken', ages: 'alle leeftijden', activity: 'pool', radiusKm: 30, types: ['water_park'], text: 'zwembad' },
   { key: 'nature', label: 'Natuur & wandelgebieden', ages: 'alle leeftijden', activity: 'hiking', radiusKm: 35, types: ['national_park', 'hiking_area'] },
-  { key: 'museum', label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural', radiusKm: 25, types: ['museum', 'art_gallery'] },
+  // Bewust zónder art_gallery: galerieën zijn verkoopruimtes, geen
+  // vakantie-uitje. Grote kunstmusea dragen het museum-type gewoon.
+  { key: 'museum', label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural', radiusKm: 25, types: ['museum'] },
   { key: 'musical', label: 'Musicals', ages: 'vanaf ± 6 jaar', activity: 'cultural', radiusKm: 25, text: 'musical theater', strictType: 'performing_arts_theater' },
   { key: 'theatre', label: 'Theaters & voorstellingen', ages: 'vanaf ± 6 jaar', activity: 'cultural', radiusKm: 20, types: ['performing_arts_theater'] },
   { key: 'attraction', label: 'Bezienswaardigheden & uitjes', ages: 'alle leeftijden', activity: 'daytrip', radiusKm: 20, types: ['tourist_attraction'] },
@@ -386,6 +388,9 @@ const EXCLUDED_PRIMARY_TYPES = new Set([
   // museum (Harwi-geval)
   'garden_center', 'home_goods_store', 'furniture_store',
   'home_improvement_store', 'gift_shop', 'store',
+  // galerieën zijn verkoopruimtes — je sleept geen beeld of schilderij
+  // mee van je vakantieadres
+  'art_gallery', 'art_studio',
 ]);
 const EXCLUDED_NAME_RE = /\b(camping|kamperen|minicamping|boerderijcamping|groepsaccommodatie|bed\s*&\s*breakfast|b&b|hostel|dierenhotel|dierenpension|hondenpension|kattenpension|dierenasiel|dierenkliniek|dierenarts|trimsalon|hondenschool)\b|tuinbeelden|tuincentrum|woonwinkel|meubel|lijstenmakerij/i;
 function isExcludedPlace(p) {
