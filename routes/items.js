@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const { requireAuth } = require('../auth');
+const { capitalizeItem } = require('../util');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -47,7 +48,7 @@ router.patch('/:id', async (req, res) => {
   }
 
   const text = (typeof req.body.text === 'string' && req.body.text.trim())
-    ? req.body.text.trim().slice(0, 200) : item.text;
+    ? capitalizeItem(req.body.text.trim().slice(0, 200)) : item.text;
   const category = (typeof req.body.category === 'string' && req.body.category)
     ? String(req.body.category).slice(0, 60) : item.category;
   let traveler = item.traveler;

@@ -6,6 +6,7 @@
 const express = require('express');
 const { pool } = require('../db');
 const { requireAuth } = require('../auth');
+const { capitalizeItem } = require('../util');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -74,7 +75,7 @@ router.put('/:id', async (req, res) => {
   const list = Array.isArray(req.body.items) ? req.body.items : [];
   const cleaned = list
     .map(it => ({
-      text: String((it && it.text) || '').trim().slice(0, 200),
+      text: capitalizeItem(String((it && it.text) || '').trim().slice(0, 200)),
       category: (it && it.category && String(it.category).trim())
         ? String(it.category).trim().slice(0, 60) : 'Overig',
       quantity: (Number.isInteger(Number(it && it.quantity)) && it.quantity >= 1 && it.quantity <= 99)

@@ -801,8 +801,7 @@ async function renderTemplate(id, epoch) {
       listEl.append(el('div', { class: 'tmpl-row' },
         el('input', {
           type: 'text', value: it.text || '', maxlength: '200', placeholder: 'Item',
-          class: 'tmpl-text', autocapitalize: 'off',
-          oninput: (e) => { local[i].text = e.target.value; },
+          class: 'tmpl-text', oninput: (e) => { local[i].text = e.target.value; },
         }),
         el('input', {
           type: 'text', value: it.category || '', list: catListId, placeholder: 'Categorie',
@@ -1321,7 +1320,7 @@ async function renderChecklist(id, epoch) {
     const li = textSpan.closest('li');
     if (!li || li.querySelector('.item-editor')) return;
 
-    const textIn = el('input', { type: 'text', value: item.text, maxlength: '200', autocapitalize: 'off' });
+    const textIn = el('input', { type: 'text', value: item.text, maxlength: '200' });
     // Dezelfde dropdown-met-'+ Nieuw…' als het toevoeg-formulier.
     const travSel = comboField({
       options: allTravelerNames, value: item.traveler || '',
@@ -1406,9 +1405,7 @@ async function renderChecklist(id, epoch) {
   }
 
   // Add item form
-  // autocapitalize uit: het (mobiele) toetsenbord maakt er anders
-  // ongevraagd 'Zonnebrand' van waar 'zonnebrand' getypt is.
-  const newItemIn = el('input', { type: 'text', placeholder: 'Item toevoegen…', autocapitalize: 'off' });
+  const newItemIn = el('input', { type: 'text', placeholder: 'Item toevoegen…' });
   const newItemQty = el('input', { type: 'number', min: '1', max: '99', value: '1', 'aria-label': 'Aantal', class: 'qty-input', title: 'Aantal' });
   // Categorie en 'voor wie' zijn dropdowns met een '+ Nieuw…'-optie:
   // kies uit wat er is, of typ iets nieuws — dat bestaat vanaf dat

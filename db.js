@@ -132,6 +132,12 @@ async function init() {
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS use_travelers BOOLEAN NOT NULL DEFAULT TRUE;
   `);
 
+  // Items beginnen altijd met een hoofdletter; bestaande items met een
+  // kleine letter worden bijgewerkt (ij als geheel: 'ijs' → 'IJs').
+  // Idempotent en locale-veilig via de vergelijking met upper().
+  await pool.query("UPDATE items SET text = 'IJ' || substring(text from 3) WHERE lower(left(text, 2)) = 'ij' AND left(text, 2) <> 'IJ'").catch(() => {});
+  await pool.query('UPDATE items SET text = upper(left(text, 1)) || substring(text from 2) WHERE left(text, 1) <> upper(left(text, 1))').catch(() => {});
+
   // Data-hygiëne: 'Gedeeld' is het gereserveerde woord voor items zonder
   // eigenaar, maar was even als échte reizigersnaam op te slaan via het
   // vrije invoerveld. Idempotente opschoning van wat er zo in kwam.

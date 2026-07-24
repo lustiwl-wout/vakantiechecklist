@@ -3,6 +3,7 @@ const { pool } = require('../db');
 const { requireAuth } = require('../auth');
 const { generateItems } = require('../templates');
 const { getCountry } = require('../countries');
+const { capitalizeItem } = require('../util');
 const { prefetchNearby } = require('./geo');
 
 const router = express.Router();
@@ -109,7 +110,7 @@ router.post('/', async (req, res) => {
 
     const copies = snapshot
       .map(it => ({
-        text: String((it && it.text) || '').trim().slice(0, 200),
+        text: capitalizeItem(String((it && it.text) || '').trim().slice(0, 200)),
         category: (it && it.category) ? String(it.category).slice(0, 60) : 'Overig',
         quantity: (Number.isInteger(Number(it && it.quantity)) && it.quantity >= 1 && it.quantity <= 99)
           ? Number(it.quantity) : 1,
@@ -289,7 +290,7 @@ router.delete('/:id', async (req, res) => {
 router.post('/:id/items', async (req, res) => {
   const checklist = await loadOwnedChecklist(req.userId, req.params.id);
   if (!checklist) return res.status(404).json({ error: 'Checklist niet gevonden' });
-  const text = String(req.body.text || '').trim().slice(0, 200);
+  const text = capitalizeItem(String(req.body.text || '').trim().slice(0, 200));
   const category = req.body.category ? String(req.body.category).slice(0, 60) : 'Overig';
   if (!text) return res.status(400).json({ error: 'Tekst is verplicht' });
   let quantity = Number(req.body.quantity);
@@ -319,7 +320,7 @@ router.post('/:id/items/bulk', async (req, res) => {
   const list = Array.isArray(req.body.items) ? req.body.items : [];
   const cleaned = list
     .map(it => ({
-      text: String((it && it.text) || '').trim().slice(0, 200),
+      text: capitalizeItem(String((it && it.text) || '').trim().slice(0, 200)),
       category: (it && it.category) ? String(it.category).slice(0, 60) : 'Overig',
       quantity: (Number.isInteger(Number(it && it.quantity)) && it.quantity >= 1 && it.quantity <= 99)
         ? Number(it.quantity) : 1,
