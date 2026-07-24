@@ -1330,9 +1330,15 @@ async function renderChecklist(id, epoch) {
       options: usedCategories, value: item.category || '',
       emptyLabel: 'Overig', newLabel: '+ Nieuwe categorie…', ariaLabel: 'Categorie',
     });
+    // Aantal is hier ook aan te passen — de +/− op de rij tellen alleen
+    // wat er al ingepakt is, niet hoeveel er mee moeten.
+    const qtyIn = el('input', { type: 'number', min: '1', max: '99', value: String(item.quantity || 1) });
 
     const editor = el('li', { class: 'item-editor no-print' },
-      el('div', { class: 'field' }, el('label', {}, 'Item'), textIn),
+      el('div', { class: 'row cols-2' },
+        el('div', { class: 'field' }, el('label', {}, 'Item'), textIn),
+        el('div', { class: 'field' }, el('label', {}, 'Aantal'), qtyIn),
+      ),
       (useTrav || useCats) ? el('div', { class: 'row cols-2' },
         useTrav ? el('div', { class: 'field' }, el('label', {}, 'Voor wie'), travSel.root) : null,
         useCats ? el('div', { class: 'field' }, el('label', {}, 'Categorie'), catSel.root) : null,
@@ -1350,6 +1356,7 @@ async function renderChecklist(id, epoch) {
                   text: textIn.value.trim() || item.text,
                   traveler: normTraveler(travSel.getValue()) || null,
                   category: catSel.getValue().trim() || 'Overig',
+                  quantity: Math.max(1, Math.min(99, Number(qtyIn.value) || item.quantity || 1)),
                 },
               });
               if (normTraveler(travSel.getValue())) await ensureTraveler(normTraveler(travSel.getValue()));
