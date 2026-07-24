@@ -291,9 +291,10 @@ async function googleBudgetOk() {
   }
 }
 
-// De FieldMask bepaalt óók het tarief: naam, sterren en locatie is
-// alles wat we tonen.
-const PLACES_FIELDMASK = 'places.displayName,places.rating,places.userRatingCount,places.location';
+// De FieldMask bepaalt óók het tarief: naam, sterren en locatie is wat
+// we tonen; primaryType valt binnen dezelfde tariefklasse en laat ons
+// accommodaties (campings, hotels) uit de uitjes filteren.
+const PLACES_FIELDMASK = 'places.displayName,places.rating,places.userRatingCount,places.location,places.primaryType';
 
 async function placesCall(path, body) {
   if (!process.env.GOOGLE_PLACES_API_KEY) throw new Error('Omgeving vereist een Google Places API-sleutel');
@@ -317,6 +318,7 @@ async function placesCall(path, body) {
       count: p.userRatingCount || 0,
       la: p.location ? Math.round(p.location.latitude * 1000) / 1000 : null,
       lo: p.location ? Math.round(p.location.longitude * 1000) / 1000 : null,
+      pt: p.primaryType || null,
     }))
     .filter(p => p.name && p.la != null);
 }
@@ -389,7 +391,23 @@ function retryNeighboursLater(lat, lng, attempt = 1) {
 
 // Alleen ophogen als de categorie-opzet verandert en de gecachte data
 // dus soorten mist. Weergave-/filterwijzigingen draaien bij het lezen.
-const PLACES_VERSION = 1;
+const PLACES_VERSION = 2; // v2: primaryType erbij (accommodatie-filter)
+
+// Accommodaties zijn geen uitjes, maar duiken wel op in de resultaten:
+// een boerderijcamping met dieren telt bij Google soms als (kinder-)
+// dierentuin (Hoeve Sonneclaer-geval). Googles eigen primaire type is
+// het betrouwbaarste signaal; de naamcheck vangt de rest en werkt ook
+// op al gecachte data zonder primaryType.
+const LODGING_PRIMARY_TYPES = new Set([
+  'campground', 'camping_cabin', 'rv_park', 'hotel', 'motel', 'resort_hotel',
+  'extended_stay_hotel', 'bed_and_breakfast', 'guest_house', 'hostel',
+  'farmstay', 'cottage', 'private_guest_room', 'inn', 'lodging',
+]);
+const LODGING_NAME_RE = /\b(camping|kamperen|minicamping|boerderijcamping|groepsaccommodatie|bed\s*&\s*breakfast|b&b|hostel)\b/i;
+function isLodgingPlace(p) {
+  if (p.pt && LODGING_PRIMARY_TYPES.has(p.pt)) return true;
+  return LODGING_NAME_RE.test(p.name);
+}
 
 function nearbyKey(lat, lng) {
   return `nearby:gp:${lat.toFixed(2)}:${lng.toFixed(2)}`;
@@ -457,6 +475,7 @@ function currentVersion(cached) {
 function buildPayload(lat, lng, raw) {
   const categories = PLACES_CATEGORIES.map(def => {
     const pois = (raw.cats[def.key] || [])
+      .filter(p => !isLodgingPlace(p))
       .map(p => ({
         name: p.name,
         lat: p.la,
@@ -620,9 +639,11 @@ router.get('/debug', async (req, res) => {
         rating: p.rating,
         ratingCount: p.count,
         distanceKm,
+        primaryType: p.pt,
         verdict: {
           genoegReviews: (p.count || 0) >= MIN_REVIEWS,
           minReviews: MIN_REVIEWS,
+          accommodatie: isLodgingPlace(p),
         },
       };
     });
