@@ -130,6 +130,7 @@ async function init() {
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS border_countries JSONB NOT NULL DEFAULT '[]';
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS use_categories BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS use_travelers BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE checklists ADD COLUMN IF NOT EXISTS use_quantities BOOLEAN NOT NULL DEFAULT TRUE;
   `);
 
   // Items beginnen altijd met een hoofdletter; bestaande items met een

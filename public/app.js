@@ -682,6 +682,7 @@ async function renderNew(epoch) {
   );
   const catsCb = el('input', { type: 'checkbox', checked: true });
   const travCb = el('input', { type: 'checkbox', checked: true });
+  const qtyCb = el('input', { type: 'checkbox', checked: true });
 
   const form = el('form', {
     onsubmit: async (e) => {
@@ -697,6 +698,7 @@ async function renderNew(epoch) {
             templateId: tmplSel.value || undefined,
             useCategories: catsCb.checked,
             useTravelers: travCb.checked,
+            useQuantities: qtyCb.checked,
           },
         });
         toast('Checklist aangemaakt');
@@ -718,7 +720,8 @@ async function renderNew(epoch) {
         el('label', {}, 'Welke functies wil je gebruiken?'),
         el('label', { class: 'checkbox-inline' }, catsCb, ' Categorieën — items gegroepeerd (Kleding, Documenten…)'),
         el('label', { class: 'checkbox-inline' }, travCb, ' Voor wie — items per reiziger'),
-        el('p', { class: 'muted', style: 'margin: 4px 0 0' }, 'Later aan of uit te zetten via het ⋯-menu op de lijst.'),
+        el('label', { class: 'checkbox-inline' }, qtyCb, ' Aantallen — meerdere stuks per item (bv. 3× T-shirt)'),
+        el('p', { class: 'muted', style: 'margin: 4px 0 0' }, 'Later aan of uit te zetten via ⋯ → Instellingen op de lijst.'),
       ),
     ),
     errBox,
@@ -1043,6 +1046,7 @@ async function renderChecklist(id, epoch) {
   //  - beide uit → één platte lijst.
   const useCats = c.use_categories !== false;
   const useTrav = c.use_travelers !== false;
+  const useQty = c.use_quantities !== false;
   const groupKey = useCats
     ? (it => it.category || 'Overig')
     : (useTrav ? (it => it.traveler || 'Algemeen') : (() => ''));
@@ -1253,9 +1257,10 @@ async function renderChecklist(id, epoch) {
     });
 
     // Teller voor items met aantal > 1: met +/− pak je stuk voor stuk in.
+    // Met de aantallen-functie uit is elk item een simpel afvinkje.
     let qtyCount = null;
     let qtyControls = null;
-    if (item.quantity > 1) {
+    if (useQty && item.quantity > 1) {
       qtyCount = el('span', { class: 'qty-count' }, `${item.packed}/${item.quantity}`);
       const step = async (delta) => {
         const target = Math.max(0, Math.min(item.quantity, item.packed + delta));
@@ -1271,7 +1276,7 @@ async function renderChecklist(id, epoch) {
         el('button', { class: 'qty-btn', title: 'Eén meer ingepakt', onclick: (e) => { e.stopPropagation(); step(1); } }, '+'),
       );
     }
-    const qtyPrint = item.quantity > 1
+    const qtyPrint = (useQty && item.quantity > 1)
       ? el('span', { class: 'qty-print' }, `× ${item.quantity}`)
       : null;
 
@@ -1335,10 +1340,10 @@ async function renderChecklist(id, epoch) {
     const qtyIn = el('input', { type: 'number', min: '1', max: '99', value: String(item.quantity || 1) });
 
     const editor = el('li', { class: 'item-editor no-print' },
-      el('div', { class: 'row cols-2' },
+      useQty ? el('div', { class: 'row cols-2' },
         el('div', { class: 'field' }, el('label', {}, 'Item'), textIn),
         el('div', { class: 'field' }, el('label', {}, 'Aantal'), qtyIn),
-      ),
+      ) : el('div', { class: 'field' }, el('label', {}, 'Item'), textIn),
       (useTrav || useCats) ? el('div', { class: 'row cols-2' },
         useTrav ? el('div', { class: 'field' }, el('label', {}, 'Voor wie'), travSel.root) : null,
         useCats ? el('div', { class: 'field' }, el('label', {}, 'Categorie'), catSel.root) : null,
@@ -1356,7 +1361,7 @@ async function renderChecklist(id, epoch) {
                   text: textIn.value.trim() || item.text,
                   traveler: normTraveler(travSel.getValue()) || null,
                   category: catSel.getValue().trim() || 'Overig',
-                  quantity: Math.max(1, Math.min(99, Number(qtyIn.value) || item.quantity || 1)),
+                  ...(useQty ? { quantity: Math.max(1, Math.min(99, Number(qtyIn.value) || item.quantity || 1)) } : {}),
                 },
               });
               if (normTraveler(travSel.getValue())) await ensureTraveler(normTraveler(travSel.getValue()));
@@ -1467,7 +1472,7 @@ async function renderChecklist(id, epoch) {
       const text = newItemIn.value.trim();
       if (!text) return;
       const category = newItemCat.getValue().trim() || 'Overig';
-      const quantity = Math.max(1, Math.min(99, Number(newItemQty.value) || 1));
+      const quantity = useQty ? Math.max(1, Math.min(99, Number(newItemQty.value) || 1)) : 1;
       const traveler = normTraveler(newItemTrav.getValue()) || undefined;
       try {
         const res = await api(`/api/checklists/${c.id}/items`, {
@@ -1488,7 +1493,8 @@ async function renderChecklist(id, epoch) {
       } catch (err) { toast(err.message); }
     },
   },
-    newItemIn, newItemQty,
+    newItemIn,
+    useQty ? newItemQty : null,
     useTrav ? newItemTrav.root : null,
     useCats ? newItemCat.root : null,
     el('button', { type: 'submit', class: 'btn btn-primary' }, 'Toevoegen')
@@ -1514,6 +1520,42 @@ async function renderChecklist(id, epoch) {
       box.append(el('span', {}, 'Scan om digitaal af te vinken'));
       return box;
     } catch { return null; }
+  })();
+
+  // Instellingen van deze lijst: welke functies staan aan. Uitzetten
+  // verbergt alleen de bijbehorende velden en groepering — de gegevens
+  // op de items blijven bewaard, dus weer aanzetten herstelt alles.
+  const settingsCard = (() => {
+    const catsCb = el('input', { type: 'checkbox', checked: useCats });
+    const travCb = el('input', { type: 'checkbox', checked: useTrav });
+    const qtyCb = el('input', { type: 'checkbox', checked: useQty });
+    return el('div', { class: 'card no-print', hidden: true },
+      el('h2', { style: 'margin-top: 0' }, 'Instellingen'),
+      el('p', { class: 'muted', style: 'margin-top: 0' },
+        'Welke functies gebruikt deze lijst? Uitzetten verbergt alleen — je gegevens blijven bewaard.'),
+      el('label', { class: 'checkbox-inline' }, catsCb, ' Categorieën — items gegroepeerd'),
+      el('label', { class: 'checkbox-inline' }, travCb, ' Voor wie — items per reiziger'),
+      el('label', { class: 'checkbox-inline' }, qtyCb, ' Aantallen — meerdere stuks per item'),
+      el('div', { class: 'actions' },
+        el('button', {
+          class: 'btn btn-sm btn-primary',
+          onclick: async (e) => {
+            e.target.disabled = true;
+            try {
+              await api(`/api/checklists/${c.id}`, {
+                method: 'PATCH',
+                body: {
+                  useCategories: catsCb.checked,
+                  useTravelers: travCb.checked,
+                  useQuantities: qtyCb.checked,
+                },
+              });
+              render();
+            } catch (err) { e.target.disabled = false; toast(err.message); }
+          },
+        }, 'Opslaan'),
+      ),
+    );
   })();
 
   // Reizigers-tabs in een vaste houder, zodat ze ook ná het renderen
@@ -1746,19 +1788,9 @@ async function renderChecklist(id, epoch) {
               } catch (err) { toast(err.message); }
             }),
             menuItem('Afdrukken', () => window.print()),
-            // Functies omschakelen: de items blijven staan; alleen de
-            // invoervelden en de groepering veranderen mee.
-            menuItem(useCats ? 'Categorieën uitzetten' : 'Categorieën aanzetten', async () => {
-              try {
-                await api(`/api/checklists/${c.id}`, { method: 'PATCH', body: { useCategories: !useCats } });
-                render();
-              } catch (err) { toast(err.message); }
-            }),
-            menuItem(useTrav ? "'Voor wie' uitzetten" : "'Voor wie' aanzetten", async () => {
-              try {
-                await api(`/api/checklists/${c.id}`, { method: 'PATCH', body: { useTravelers: !useTrav } });
-                render();
-              } catch (err) { toast(err.message); }
+            menuItem('Instellingen', () => {
+              settingsCard.hidden = false;
+              settingsCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }),
             menuItem('Verwijderen', async () => {
               if (!confirm(`Checklist "${c.name}" verwijderen? Dit kan niet ongedaan gemaakt worden.`)) return;
@@ -1795,6 +1827,7 @@ async function renderChecklist(id, epoch) {
       el('div', { class: 'progress' }, progressBar),
       progressLabel,
     ),
+    settingsCard,
     travelersCard,
     tabsSlot,
     addForm,

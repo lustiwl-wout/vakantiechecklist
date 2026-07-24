@@ -84,7 +84,7 @@ function cleanQuantities(input) {
 // startpunt. De lijst begint verder leeg — vullen kan handmatig of via
 // de pagina 'Automatisch vullen' (PATCH + voorstellen).
 router.post('/', async (req, res) => {
-  const { name, templateId, useCategories, useTravelers } = req.body || {};
+  const { name, templateId, useCategories, useTravelers, useQuantities } = req.body || {};
   if (!name || !String(name).trim()) {
     return res.status(400).json({ error: 'Naam is verplicht' });
   }
@@ -103,8 +103,8 @@ router.post('/', async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      'INSERT INTO checklists (user_id, name, use_categories, use_travelers) VALUES ($1, $2, $3, $4) RETURNING *',
-      [req.userId, String(name).trim(), useCategories !== false, useTravelers !== false]
+      'INSERT INTO checklists (user_id, name, use_categories, use_travelers, use_quantities) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+      [req.userId, String(name).trim(), useCategories !== false, useTravelers !== false, useQuantities !== false]
     );
     const checklist = rows[0];
 
@@ -182,6 +182,7 @@ router.patch('/:id', async (req, res) => {
   if (typeof req.body.name === 'string' && req.body.name.trim()) set('name', req.body.name.trim());
   if ('useCategories' in req.body) set('use_categories', req.body.useCategories !== false);
   if ('useTravelers' in req.body) set('use_travelers', req.body.useTravelers !== false);
+  if ('useQuantities' in req.body) set('use_quantities', req.body.useQuantities !== false);
   if ('destination' in req.body) set('destination', req.body.destination || null);
   if ('country' in req.body) set('country', getCountry(req.body.country) ? String(req.body.country).toLowerCase() : null);
   if ('rentalCar' in req.body) set('rental_car', req.body.rentalCar === true);
