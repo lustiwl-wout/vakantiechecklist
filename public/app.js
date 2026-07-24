@@ -629,6 +629,8 @@ async function renderNew(epoch) {
     el('option', { value: '' }, 'Lege lijst — zelf vullen'),
     ...templates.map(t => el('option', { value: String(t.id) }, `${t.name} (${t.count} items)`)),
   );
+  const catsCb = el('input', { type: 'checkbox', checked: true });
+  const travCb = el('input', { type: 'checkbox', checked: true });
 
   const form = el('form', {
     onsubmit: async (e) => {
@@ -639,7 +641,12 @@ async function renderNew(epoch) {
       try {
         const res = await api('/api/checklists', {
           method: 'POST',
-          body: { name: nameIn.value, templateId: tmplSel.value || undefined },
+          body: {
+            name: nameIn.value,
+            templateId: tmplSel.value || undefined,
+            useCategories: catsCb.checked,
+            useTravelers: travCb.checked,
+          },
         });
         toast('Checklist aangemaakt');
         navigate(`#/list/${res.checklist.id}`);
@@ -656,6 +663,12 @@ async function renderNew(epoch) {
     el('div', { class: 'card spaced' },
       el('div', { class: 'field' }, el('label', {}, 'Naam van de reis *'), nameIn),
       el('div', { class: 'field' }, el('label', {}, 'Beginnen met'), tmplSel),
+      el('div', { class: 'field' },
+        el('label', {}, 'Welke functies wil je gebruiken?'),
+        el('label', { class: 'checkbox-inline' }, catsCb, ' Categorieën — items gegroepeerd (Kleding, Documenten…)'),
+        el('label', { class: 'checkbox-inline' }, travCb, ' Voor wie — items per reiziger'),
+        el('p', { class: 'muted', style: 'margin: 4px 0 0' }, 'Later aan of uit te zetten via het ⋯-menu op de lijst.'),
+      ),
     ),
     errBox,
     el('div', { class: 'actions' },
@@ -750,7 +763,7 @@ async function renderTemplate(id, epoch) {
         }),
         el('input', {
           type: 'text', value: it.traveler || '', list: travListId, placeholder: 'Voor wie?',
-          class: 'tmpl-cat', title: 'Leeg = gedeeld',
+          class: 'tmpl-cat', title: 'Leeg = algemeen',
           oninput: (e) => { local[i].traveler = e.target.value; },
         }),
         el('button', {
@@ -969,6 +982,20 @@ async function renderChecklist(id, epoch) {
   const c = data.checklist;
   let items = data.items;
 
+  // Welke functies deze checklist gebruikt (gekozen bij het aanmaken,
+  // omschakelbaar via het ⋯-menu). Bepaalt de invoervelden én de
+  // groepering — ook op de afdruk, want die drukt dezelfde weergave af:
+  //  - categorieën aan → groeperen op categorie; staat 'voor wie' óók
+  //    aan, dan komt de naam tussen haakjes achter het item;
+  //  - alleen 'voor wie' aan → groeperen per reiziger ('Algemeen' voor
+  //    items zonder persoon);
+  //  - beide uit → één platte lijst.
+  const useCats = c.use_categories !== false;
+  const useTrav = c.use_travelers !== false;
+  const groupKey = useCats
+    ? (it => it.category || 'Overig')
+    : (useTrav ? (it => it.traveler || 'Algemeen') : (() => ''));
+
   // Alle bekende reizigersnamen: uit het reizigers-formulier + uit items.
   function allTravelerNames() {
     const names = (Array.isArray(c.travelers) ? c.travelers : [])
@@ -1010,7 +1037,7 @@ async function renderChecklist(id, epoch) {
     };
     chips.append(mk('Alles', null));
     for (const name of inItems) chips.append(mk(name, name));
-    chips.append(mk('Gedeeld', '__shared__'));
+    chips.append(mk('Algemeen', '__shared__'));
     return chips;
   }
 
@@ -1047,7 +1074,7 @@ async function renderChecklist(id, epoch) {
   function updateCatCount(cat) {
     const span = catCountSpans.get(cat);
     if (!span) return;
-    const inCat = visibleItems().filter(i => (i.category || 'Overig') === cat);
+    const inCat = visibleItems().filter(i => groupKey(i) === cat);
     const done = inCat.filter(i => i.is_checked).length;
     span.textContent = `${done}/${inCat.length}`;
     span.classList.toggle('complete', inCat.length > 0 && done === inCat.length);
@@ -1067,13 +1094,28 @@ async function renderChecklist(id, epoch) {
     }
     const groups = {};
     for (const it of visible) {
-      const cat = it.category || 'Overig';
-      (groups[cat] = groups[cat] || []).push(it);
+      const g = groupKey(it);
+      (groups[g] = groups[g] || []).push(it);
     }
-    const cats = Object.keys(groups).sort((a, b) => {
-      const ia = CATEGORY_ORDER.indexOf(a); const ib = CATEGORY_ORDER.indexOf(b);
-      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-    });
+    let cats;
+    if (useCats) {
+      cats = Object.keys(groups).sort((a, b) => {
+        const ia = CATEGORY_ORDER.indexOf(a); const ib = CATEGORY_ORDER.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+      });
+    } else if (useTrav) {
+      // Per reiziger, in de volgorde van het reizigersoverzicht;
+      // 'Algemeen' (zonder persoon) achteraan.
+      const order = allTravelerNames();
+      cats = Object.keys(groups).sort((a, b) => {
+        if (a === 'Algemeen') return 1;
+        if (b === 'Algemeen') return -1;
+        const ia = order.indexOf(a); const ib = order.indexOf(b);
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b, 'nl');
+      });
+    } else {
+      cats = Object.keys(groups);
+    }
 
     for (const cat of cats) {
       const list = el('ul', { class: 'item-list', 'data-category': cat });
@@ -1083,44 +1125,48 @@ async function renderChecklist(id, epoch) {
       const countSpan = el('span', { class: 'cat-count' });
       catCountSpans.set(cat, countSpan);
 
-      const group = el('div', { class: 'category-group' + (collapsedCats.has(cat) ? ' collapsed' : '') });
-      const header = el('h2', { class: 'cat-header', role: 'button', tabindex: '0' },
-        el('span', { class: 'chevron no-print' }, '▸'),
-        el('span', { class: 'cat-name' }, cat),
-        countSpan,
-        el('button', {
-          class: 'icon-btn no-print', title: 'Categorie hernoemen',
-          onclick: async (ev) => {
-            ev.stopPropagation();
-            const to = prompt('Nieuwe naam voor deze categorie:', cat);
-            if (to == null) return;
-            const cleanName = to.trim().slice(0, 60);
-            if (!cleanName || cleanName === cat) return;
-            try {
-              await api(`/api/checklists/${c.id}/categories/rename`, {
-                method: 'POST', body: { from: cat, to: cleanName },
-              });
-              for (const it of items) {
-                if ((it.category || 'Overig') === cat) it.category = cleanName;
-              }
-              paintItems();
-              paintCategoryOptions();
-              toast('Categorie hernoemd');
-            } catch (err) { toast(err.message); }
-          },
-        }, '✎'),
-      );
-      const toggle = () => {
-        const nowCollapsed = group.classList.toggle('collapsed');
-        if (nowCollapsed) collapsedCats.add(cat); else collapsedCats.delete(cat);
-        saveCollapsed();
-      };
-      header.addEventListener('click', toggle);
-      header.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
-      });
-
-      group.append(header, list);
+      const group = el('div', { class: 'category-group' + (cat && collapsedCats.has(cat) ? ' collapsed' : '') });
+      if (cat) {
+        const header = el('h2', { class: 'cat-header', role: 'button', tabindex: '0' },
+          el('span', { class: 'chevron no-print' }, '▸'),
+          el('span', { class: 'cat-name' }, cat),
+          countSpan,
+          // Hernoemen geldt alleen voor categorieën — een reizigers-kop
+          // hernoem je via het 👥-overzicht.
+          useCats ? el('button', {
+            class: 'icon-btn no-print', title: 'Categorie hernoemen',
+            onclick: async (ev) => {
+              ev.stopPropagation();
+              const to = prompt('Nieuwe naam voor deze categorie:', cat);
+              if (to == null) return;
+              const cleanName = to.trim().slice(0, 60);
+              if (!cleanName || cleanName === cat) return;
+              try {
+                await api(`/api/checklists/${c.id}/categories/rename`, {
+                  method: 'POST', body: { from: cat, to: cleanName },
+                });
+                for (const it of items) {
+                  if ((it.category || 'Overig') === cat) it.category = cleanName;
+                }
+                paintItems();
+                paintCategoryOptions();
+                toast('Categorie hernoemd');
+              } catch (err) { toast(err.message); }
+            },
+          }, '✎') : null,
+        );
+        const toggle = () => {
+          const nowCollapsed = group.classList.toggle('collapsed');
+          if (nowCollapsed) collapsedCats.add(cat); else collapsedCats.delete(cat);
+          saveCollapsed();
+        };
+        header.addEventListener('click', toggle);
+        header.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+        });
+        group.append(header);
+      }
+      group.append(list);
       itemsContainer.append(group);
       updateCatCount(cat);
     }
@@ -1137,7 +1183,7 @@ async function renderChecklist(id, epoch) {
       li.classList.toggle('done', item.is_checked);
       if (qtyCount) qtyCount.textContent = `${item.packed}/${item.quantity}`;
       paintProgress();
-      updateCatCount(item.category || 'Overig');
+      updateCatCount(groupKey(item));
     };
 
     const cb = el('input', {
@@ -1181,6 +1227,13 @@ async function renderChecklist(id, epoch) {
     const textSpan = el('span', { class: 'text' }, item.text);
     textSpan.addEventListener('click', () => startInlineEdit(textSpan, item));
 
+    // Beide functies aan → naam tussen haakjes achter het item (de
+    // groepering is dan per categorie, dus anders zie je op de afdruk
+    // niet van wie iets is).
+    const travTag = (useCats && useTrav && item.traveler)
+      ? el('span', { class: 'trav-tag' }, `(${item.traveler})`)
+      : null;
+
     const editBtn = el('button', {
       class: 'icon-btn no-print',
       title: 'Bewerken',
@@ -1207,7 +1260,7 @@ async function renderChecklist(id, epoch) {
     const li = el('li', {
       class: 'item' + (item.is_checked ? ' done' : ''),
       'data-id': item.id,
-    }, handle, cb, textSpan, qtyPrint, qtyControls, editBtn, del);
+    }, handle, cb, textSpan, travTag, qtyPrint, qtyControls, editBtn, del);
     return li;
   }
 
@@ -1218,10 +1271,10 @@ async function renderChecklist(id, epoch) {
 
     const textIn = el('input', { type: 'text', value: item.text, maxlength: '200' });
     // Vrij invulveld met suggesties, net als bij toevoegen: een nieuwe
-    // naam maakt de reiziger aan. Leeg = gedeeld.
+    // naam maakt de reiziger aan. Leeg = algemeen.
     const travSel = el('input', {
       type: 'text', list: travListId, value: item.traveler || '',
-      placeholder: 'Gedeeld', title: 'Kies een reiziger of typ een nieuwe naam. Leeg = gedeeld.',
+      placeholder: 'Algemeen', title: 'Kies een reiziger of typ een nieuwe naam. Leeg = algemeen.',
     });
     // Zelfde vrije categorie-invoer als het toevoeg-formulier: kies uit
     // wat er is, of typ een nieuwe.
@@ -1232,10 +1285,10 @@ async function renderChecklist(id, epoch) {
 
     const editor = el('li', { class: 'item-editor no-print' },
       el('div', { class: 'field' }, el('label', {}, 'Item'), textIn),
-      el('div', { class: 'row cols-2' },
-        el('div', { class: 'field' }, el('label', {}, 'Voor wie'), travSel),
-        el('div', { class: 'field' }, el('label', {}, 'Categorie'), catSel),
-      ),
+      (useTrav || useCats) ? el('div', { class: 'row cols-2' },
+        useTrav ? el('div', { class: 'field' }, el('label', {}, 'Voor wie'), travSel) : null,
+        useCats ? el('div', { class: 'field' }, el('label', {}, 'Categorie'), catSel) : null,
+      ) : null,
       el('div', { class: 'actions' },
         el('button', { type: 'button', class: 'btn btn-sm', onclick: () => editor.remove() }, 'Annuleren'),
         el('button', {
@@ -1312,12 +1365,12 @@ async function renderChecklist(id, epoch) {
   });
   // 'Voor wie' werkt net als de categorie: vrij tekstveld met suggesties.
   // Typ je een naam die nog niet bestaat, dan wordt die reiziger
-  // aangemaakt. Leeg laten = gedeeld item.
+  // aangemaakt. Leeg laten = algemeen item.
   const travListId = `travlist-${c.id}`;
   const travDatalist = el('datalist', { id: travListId });
   const newItemTrav = el('input', {
     type: 'text', list: travListId, 'aria-label': 'Voor wie', class: 'cat-input',
-    placeholder: 'Voor wie?', title: 'Kies een reiziger of typ een nieuwe naam. Leeg = gedeeld.',
+    placeholder: 'Voor wie?', title: 'Kies een reiziger of typ een nieuwe naam. Leeg = algemeen.',
   });
 
   function paintTravelerOptions() {
@@ -1326,17 +1379,17 @@ async function renderChecklist(id, epoch) {
   }
   paintTravelerOptions();
 
-  // 'Gedeeld' is het gereserveerde woord voor items zonder eigenaar —
-  // wie het intypt bedoelt géén reiziger met die naam.
+  // 'Algemeen' (en het oudere 'Gedeeld') is het gereserveerde woord voor
+  // items zonder eigenaar — wie het intypt bedoelt géén reiziger met die naam.
   function normTraveler(v) {
     const s = String(v || '').trim();
-    return s.toLowerCase() === 'gedeeld' ? '' : s;
+    return ['gedeeld', 'algemeen'].includes(s.toLowerCase()) ? '' : s;
   }
 
   // Onbekende reizigersnaam? Dan bestaat die reiziger vanaf nu — hij komt
   // ook in het 👥-overzicht en (zonder leeftijd) in Automatisch vullen.
   async function ensureTraveler(name) {
-    if (!name || name.toLowerCase() === 'gedeeld') return;
+    if (!name || ['gedeeld', 'algemeen'].includes(name.toLowerCase())) return;
     if (allTravelerNames().some(n => n.toLowerCase() === name.toLowerCase())) return;
     const list = (Array.isArray(c.travelers) ? c.travelers : [])
       .filter(t => t && (t.name || t.birthdate || t.category || t.age != null));
@@ -1383,7 +1436,10 @@ async function renderChecklist(id, epoch) {
       } catch (err) { toast(err.message); }
     },
   },
-    newItemIn, newItemQty, newItemTrav, newItemCat, travDatalist, catDatalist,
+    newItemIn, newItemQty,
+    useTrav ? newItemTrav : null,
+    useCats ? newItemCat : null,
+    travDatalist, catDatalist,
     el('button', { type: 'submit', class: 'btn btn-primary' }, 'Toevoegen')
   );
 
@@ -1414,6 +1470,7 @@ async function renderChecklist(id, epoch) {
   const tabsSlot = el('div', {});
   function refreshTabs() {
     clear(tabsSlot);
+    if (!useTrav) return;
     const t = travelerTabs();
     if (t) tabsSlot.append(t);
   }
@@ -1518,10 +1575,10 @@ async function renderChecklist(id, epoch) {
                 body: {
                   travelers: local
                     .map(t => ({ ...t, name: (t.name || '').trim() }))
-                    // 'Gedeeld' is geen persoon — losse regels met alleen
-                    // die naam vervallen stilletjes.
+                    // 'Algemeen'/'Gedeeld' is geen persoon — losse regels
+                    // met alleen die naam vervallen stilletjes.
                     .filter(t => t.birthdate || t.category || t.age != null
-                      || t.name.toLowerCase() !== 'gedeeld'),
+                      || !['gedeeld', 'algemeen'].includes(t.name.toLowerCase())),
                 },
               });
               toast('Reizigers opgeslagen');
@@ -1600,7 +1657,7 @@ async function renderChecklist(id, epoch) {
           check();
           return btn;
         })(),
-        el('button', {
+        useTrav ? el('button', {
           class: 'btn btn-sm',
           title: 'Reizigers toevoegen of verwijderen — alleen een naam is nodig',
           onclick: () => {
@@ -1611,7 +1668,7 @@ async function renderChecklist(id, epoch) {
               travelersCard.hidden = true;
             }
           },
-        }, '👥 Reizigers'),
+        }, '👥 Reizigers') : null,
         el('a', { href: `#/list/${c.id}/vullen`, class: 'btn btn-sm' }, '✨ Automatisch vullen'),
         // Secundaire acties achter één ⋯-knop: houdt de kop compact,
         // vooral op mobiel waar elke extra knop een regel kost.
@@ -1638,6 +1695,20 @@ async function renderChecklist(id, epoch) {
               } catch (err) { toast(err.message); }
             }),
             menuItem('Afdrukken', () => window.print()),
+            // Functies omschakelen: de items blijven staan; alleen de
+            // invoervelden en de groepering veranderen mee.
+            menuItem(useCats ? 'Categorieën uitzetten' : 'Categorieën aanzetten', async () => {
+              try {
+                await api(`/api/checklists/${c.id}`, { method: 'PATCH', body: { useCategories: !useCats } });
+                render();
+              } catch (err) { toast(err.message); }
+            }),
+            menuItem(useTrav ? "'Voor wie' uitzetten" : "'Voor wie' aanzetten", async () => {
+              try {
+                await api(`/api/checklists/${c.id}`, { method: 'PATCH', body: { useTravelers: !useTrav } });
+                render();
+              } catch (err) { toast(err.message); }
+            }),
             menuItem('Verwijderen', async () => {
               if (!confirm(`Checklist "${c.name}" verwijderen? Dit kan niet ongedaan gemaakt worden.`)) return;
               try {

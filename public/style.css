@@ -564,6 +564,9 @@ textarea { min-height: 80px; resize: vertical; }
 .tmpl-row .tmpl-cat { flex: 1 1 120px; min-width: 0; }
 .tmpl-row .qty-input { flex: 0 0 64px; }
 
+/* Naam achter het item wanneer categorieën én 'voor wie' allebei aan staan. */
+.item .trav-tag { color: var(--muted); font-size: 13px; flex-shrink: 0; }
+
 .drag-handle {
   cursor: grab;
   color: var(--muted);
@@ -660,6 +663,7 @@ textarea { min-height: 80px; resize: vertical; }
     page-break-inside: avoid;
   }
   .item .text { font-size: 10pt; }
+  .item .trav-tag { font-size: 9pt; color: #333; }
   /* Eigen hokjes-rendering: browsers drukken native checkboxes soms leeg
      of vaag af. Zo staat wat al afgevinkt is óók op papier aangevinkt. */
   .item input[type="checkbox"] {

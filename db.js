@@ -128,23 +128,25 @@ async function init() {
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION;
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION;
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS border_countries JSONB NOT NULL DEFAULT '[]';
+    ALTER TABLE checklists ADD COLUMN IF NOT EXISTS use_categories BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE checklists ADD COLUMN IF NOT EXISTS use_travelers BOOLEAN NOT NULL DEFAULT TRUE;
   `);
 
   // Data-hygiëne: 'Gedeeld' is het gereserveerde woord voor items zonder
   // eigenaar, maar was even als échte reizigersnaam op te slaan via het
   // vrije invoerveld. Idempotente opschoning van wat er zo in kwam.
-  await pool.query("UPDATE items SET traveler = NULL WHERE traveler ILIKE 'gedeeld'").catch(() => {});
+  await pool.query("UPDATE items SET traveler = NULL WHERE lower(traveler) IN ('gedeeld', 'algemeen')").catch(() => {});
   await pool.query(`
     UPDATE checklists SET travelers = COALESCE(
       (SELECT jsonb_agg(t) FROM jsonb_array_elements(travelers) AS t
-        WHERE NOT (lower(coalesce(t->>'name', '')) = 'gedeeld'
+        WHERE NOT (lower(coalesce(t->>'name', '')) IN ('gedeeld', 'algemeen')
                    AND t->>'birthdate' IS NULL
                    AND t->>'category' IS NULL
                    AND t->>'age' IS NULL)),
       '[]'::jsonb)
     WHERE EXISTS (
       SELECT 1 FROM jsonb_array_elements(travelers) AS t
-       WHERE lower(coalesce(t->>'name', '')) = 'gedeeld'
+       WHERE lower(coalesce(t->>'name', '')) IN ('gedeeld', 'algemeen')
          AND t->>'birthdate' IS NULL
          AND t->>'category' IS NULL
          AND t->>'age' IS NULL)

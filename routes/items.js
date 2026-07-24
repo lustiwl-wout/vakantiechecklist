@@ -54,9 +54,9 @@ router.patch('/:id', async (req, res) => {
   if ('traveler' in req.body) {
     traveler = (typeof req.body.traveler === 'string' && req.body.traveler.trim())
       ? req.body.traveler.trim().slice(0, 60) : null;
-    // 'Gedeeld' is het gereserveerde woord voor 'geen persoon' — wie het
-    // intypt bedoelt een gedeeld item, geen reiziger met die naam.
-    if (traveler && traveler.toLowerCase() === 'gedeeld') traveler = null;
+    // 'Algemeen' (en het oudere 'Gedeeld') is het gereserveerde woord
+    // voor 'geen persoon' — wie het intypt bedoelt een algemeen item.
+    if (traveler && ['gedeeld', 'algemeen'].includes(traveler.toLowerCase())) traveler = null;
   }
 
   const { rows } = await pool.query(

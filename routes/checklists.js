@@ -45,9 +45,9 @@ function cleanTravelers(input) {
         if (Number.isFinite(age) && age >= 0 && age <= 120) return { name, age };
         return null;
       }
-      // 'Gedeeld' is geen persoon maar het gereserveerde woord voor
-      // items zonder eigenaar — nooit als reiziger opslaan.
-      if (name.toLowerCase() === 'gedeeld') return null;
+      // 'Algemeen'/'Gedeeld' is geen persoon maar het gereserveerde woord
+      // voor items zonder eigenaar — nooit als reiziger opslaan.
+      if (['gedeeld', 'algemeen'].includes(name.toLowerCase())) return null;
       return name ? { name } : null;
     })
     .filter(Boolean);
@@ -83,7 +83,7 @@ function cleanQuantities(input) {
 // startpunt. De lijst begint verder leeg — vullen kan handmatig of via
 // de pagina 'Automatisch vullen' (PATCH + voorstellen).
 router.post('/', async (req, res) => {
-  const { name, templateId } = req.body || {};
+  const { name, templateId, useCategories, useTravelers } = req.body || {};
   if (!name || !String(name).trim()) {
     return res.status(400).json({ error: 'Naam is verplicht' });
   }
@@ -102,8 +102,8 @@ router.post('/', async (req, res) => {
   try {
     await client.query('BEGIN');
     const { rows } = await client.query(
-      'INSERT INTO checklists (user_id, name) VALUES ($1, $2) RETURNING *',
-      [req.userId, String(name).trim()]
+      'INSERT INTO checklists (user_id, name, use_categories, use_travelers) VALUES ($1, $2, $3, $4) RETURNING *',
+      [req.userId, String(name).trim(), useCategories !== false, useTravelers !== false]
     );
     const checklist = rows[0];
 
@@ -179,6 +179,8 @@ router.patch('/:id', async (req, res) => {
   }
 
   if (typeof req.body.name === 'string' && req.body.name.trim()) set('name', req.body.name.trim());
+  if ('useCategories' in req.body) set('use_categories', req.body.useCategories !== false);
+  if ('useTravelers' in req.body) set('use_travelers', req.body.useTravelers !== false);
   if ('destination' in req.body) set('destination', req.body.destination || null);
   if ('country' in req.body) set('country', getCountry(req.body.country) ? String(req.body.country).toLowerCase() : null);
   if ('rentalCar' in req.body) set('rental_car', req.body.rentalCar === true);
@@ -294,8 +296,8 @@ router.post('/:id/items', async (req, res) => {
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 99) quantity = 1;
   let traveler = (typeof req.body.traveler === 'string' && req.body.traveler.trim())
     ? req.body.traveler.trim().slice(0, 60) : null;
-  // 'Gedeeld' is het gereserveerde woord voor 'geen persoon'.
-  if (traveler && traveler.toLowerCase() === 'gedeeld') traveler = null;
+  // 'Algemeen' (en het oudere 'Gedeeld') is gereserveerd voor 'geen persoon'.
+  if (traveler && ['gedeeld', 'algemeen'].includes(traveler.toLowerCase())) traveler = null;
 
   // Positie in hetzelfde statement bepalen: geen race bij gelijktijdige adds.
   const { rows } = await pool.query(
