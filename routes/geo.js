@@ -256,7 +256,7 @@ async function googleBudgetOk() {
 // De FieldMask bepaalt óók het tarief: naam, sterren en locatie is wat
 // we tonen; primaryType valt binnen dezelfde tariefklasse en laat ons
 // accommodaties (campings, hotels) uit de uitjes filteren.
-const PLACES_FIELDMASK = 'places.displayName,places.rating,places.userRatingCount,places.location,places.primaryType';
+const PLACES_FIELDMASK = 'places.displayName,places.rating,places.userRatingCount,places.location,places.primaryType,places.businessStatus';
 
 async function placesCall(path, body) {
   if (!process.env.GOOGLE_PLACES_API_KEY) throw new Error('Omgeving vereist een Google Places API-sleutel');
@@ -281,6 +281,7 @@ async function placesCall(path, body) {
       la: p.location ? Math.round(p.location.latitude * 1000) / 1000 : null,
       lo: p.location ? Math.round(p.location.longitude * 1000) / 1000 : null,
       pt: p.primaryType || null,
+      bs: p.businessStatus || null,
     }))
     .filter(p => p.name && p.la != null);
 }
@@ -362,7 +363,7 @@ function updateNeighboursLater(lat, lng, attempt = 1) {
 
 // Alleen ophogen als de categorie-opzet verandert en de gecachte data
 // dus soorten mist. Weergave-/filterwijzigingen draaien bij het lezen.
-const PLACES_VERSION = 2; // v2: primaryType erbij (accommodatie-filter)
+const PLACES_VERSION = 3; // v3: businessStatus (v2: primaryType)
 
 // Sommige bedrijven zijn geen uitje maar duiken wel op in de
 // resultaten: een boerderijcamping met dieren telt bij Google soms als
@@ -452,6 +453,9 @@ function buildPayload(lat, lng, raw) {
   const categories = PLACES_CATEGORIES.map(def => {
     const pois = (raw.cats[def.key] || [])
       .filter(p => !isExcludedPlace(p))
+      // (Tijdelijk) gesloten? Dan heeft tonen geen zin. Zonder status
+      // (oudere cache) tonen we gewoon.
+      .filter(p => !p.bs || p.bs === 'OPERATIONAL')
       .map(p => ({
         name: p.name,
         lat: p.la,
@@ -621,10 +625,12 @@ router.get('/debug', async (req, res) => {
         ratingCount: p.count,
         distanceKm,
         primaryType: p.pt,
+        businessStatus: p.bs,
         verdict: {
           genoegReviews: (p.count || 0) >= MIN_REVIEWS,
           minReviews: MIN_REVIEWS,
           uitgesloten: isExcludedPlace(p),
+          gesloten: !!(p.bs && p.bs !== 'OPERATIONAL'),
         },
       };
     });
