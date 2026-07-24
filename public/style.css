@@ -253,6 +253,9 @@ textarea { min-height: 80px; resize: vertical; }
 
 /* ⋯-menu voor secundaire acties in de kop. */
 .menu-wrap { position: relative; }
+/* 'display: flex' hieronder zou het hidden-attribuut overschrijven
+   (hidden werkt via display: none) — deze regel houdt hidden de baas. */
+.menu-pop[hidden] { display: none; }
 .menu-pop {
   position: absolute;
   right: 0;
