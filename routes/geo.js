@@ -672,6 +672,8 @@ function buildPayload(lat, lng, raw) {
 // budget verschijnen er simpelweg geen sterren.
 
 const GPLACES_MONTHLY_BUDGET = 4500;
+// Crowd-validatie: pas serieus vanaf dit aantal Google-reviews.
+const MIN_REVIEWS = 25;
 
 async function googleBudgetOk() {
   const month = new Date().toISOString().slice(0, 7);
@@ -879,7 +881,6 @@ async function enrichWithRatings(payload) {
   // bosbaden) halen dat ruim; een veentje met drie beoordelingen niet
   // (Moordenaarsveen-klasse). Fail-open: kon de opzoeking niet
   // plaatsvinden (budget op, storing), dan blijft de locatie staan.
-  const MIN_REVIEWS = 25;
   for (const cat of payload.categories) {
     cat.pois = cat.pois.filter(p =>
       !p.ratingChecked || (p.rating && (p.ratingCount || 0) >= MIN_REVIEWS));
@@ -945,6 +946,71 @@ router.get('/nearby/ready', async (req, res) => {
   res.json({ ready: usable });
 });
 
+// Boekbare excursies (boottochten, dagtours, snorkeltrips) staan
+// nauwelijks in OSM — het zijn diensten, geen plekken. Google Places
+// kent ze wél: één tekst-zoekopdracht per locatie (30 dagen gecachet)
+// vult de categorie 'Excursies & boottochten'. Alleen aanbieders met
+// een stevige beoordeling komen erdoor; zonder API-sleutel verschijnt
+// de categorie simpelweg niet.
+async function fetchTours(lat, lng) {
+  const key = `gtours:v1:${lat.toFixed(2)}:${lng.toFixed(2)}`;
+  const hit = await cacheGetAny(key, TTL_NEARBY);
+  if (hit && hit.fresh) return hit.data;
+  if (!process.env.GOOGLE_PLACES_API_KEY) return null;
+  if (!(await googleBudgetOk())) return null;
+  try {
+    const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Goog-Api-Key': process.env.GOOGLE_PLACES_API_KEY,
+        'X-Goog-FieldMask': 'places.displayName,places.rating,places.userRatingCount,places.location',
+      },
+      body: JSON.stringify({
+        textQuery: 'boottochten, excursies en dagtours',
+        locationBias: { circle: { center: { latitude: lat, longitude: lng }, radius: 25000 } },
+        maxResultCount: 12,
+        languageCode: 'nl',
+      }),
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) throw new Error(`Places ${res.status}`);
+    const data = await res.json();
+    const out = (data.places || [])
+      .map(p => ({
+        name: (p.displayName && p.displayName.text) || '',
+        rating: p.rating || null,
+        ratingCount: p.userRatingCount || 0,
+        lat: p.location ? Math.round(p.location.latitude * 1000) / 1000 : null,
+        lng: p.location ? Math.round(p.location.longitude * 1000) / 1000 : null,
+      }))
+      .filter(p => p.name && p.lat != null && p.rating && p.rating >= 4 && p.ratingCount >= MIN_REVIEWS)
+      .map(p => ({ ...p, distanceKm: Math.round(haversineKm(lat, lng, p.lat, p.lng) * 10) / 10 }))
+      // Tekst-zoeken kent geen harde straal; verder dan ~40 km is geen
+      // dagje-uit meer vanaf de accommodatie.
+      .filter(p => p.distanceKm <= 40)
+      .sort((a, b) => b.rating - a.rating || b.ratingCount - a.ratingCount)
+      .slice(0, 10);
+    await cacheSet(key, out);
+    return out;
+  } catch (err) {
+    console.warn('[gtours]', err.message);
+    return null;
+  }
+}
+
+async function respondNearby(res, lat, lng, raw) {
+  const payload = await enrichWithRatings(buildPayload(lat, lng, raw));
+  const tours = await fetchTours(lat, lng);
+  if (tours && tours.length) {
+    payload.categories.push({
+      key: 'tours', label: 'Excursies & boottochten',
+      ages: 'alle leeftijden', activity: 'daytrip', pois: tours,
+    });
+  }
+  res.json(payload);
+}
+
 router.get('/nearby', async (req, res) => {
   const c = parseCoords(req);
   if (!c) return res.status(400).json({ error: 'Ongeldige coördinaten' });
@@ -959,16 +1025,16 @@ router.get('/nearby', async (req, res) => {
   // Alleen de Vernieuwen-knop (refresh=1) wacht op verse data.
   if (!refresh && usable) {
     if (!cached.fresh || !currentQv(cached)) backgroundRefresh(c.lat, c.lng);
-    return res.json(await enrichWithRatings(buildPayload(c.lat, c.lng, cached.data)));
+    return respondNearby(res, c.lat, c.lng, cached.data);
   }
 
   try {
     const raw = await fetchNearbyRawShared(c.lat, c.lng);
-    res.json(await enrichWithRatings(buildPayload(c.lat, c.lng, raw)));
+    await respondNearby(res, c.lat, c.lng, raw);
   } catch (err) {
     console.error('[geo/nearby]', err.message);
     // Verouderde data is beter dan een foutmelding.
-    if (usable) return res.json(await enrichWithRatings(buildPayload(c.lat, c.lng, cached.data)));
+    if (usable) return respondNearby(res, c.lat, c.lng, cached.data);
     res.status(502).json({ error: 'Omgevingsinformatie is tijdelijk niet beschikbaar — probeer het later opnieuw' });
   }
 });
