@@ -704,6 +704,20 @@ function ratingKey(name, lat, lng, gtype) {
 // "Aqua Mundo Center Parcs De Eemhof"); spellingsvarianten tellen via een
 // prefix-vergelijking ("Attractiepark" ~ "Attractie- & Vakantiepark").
 const NAME_STOPWORDS = new Set(['de', 'het', 'een', 'en', 'van', 'der', 'den', 'ter', 'ten', 't', 's', 'aan', 'bij', 'in', 'op', 'the', 'of']);
+// Soortwoorden beschrijven w\u00e1t iets is, niet w\u00e9lke het is. Ze tellen
+// niet mee als identiteitswoord: "Speelpark Sprookjeshof" moet matchen
+// op "Sprookjeshof Zuidlaren" (identiteit: sprookjeshof \u2713), terwijl
+// "Museum GGZ Drenthe" op "Drents Museum" blijft sneuvelen (identiteit
+// ggz+drenthe \u2717 \u2014 'museum' als soortwoord redt de match niet meer).
+const GENERIC_NAME_TOKENS = new Set([
+  'museum', 'openluchtmuseum', 'speelpark', 'speeltuin', 'park', 'pretpark',
+  'attractiepark', 'vakantiepark', 'dierentuin', 'dierenpark', 'kinderboerderij',
+  'hertenkamp', 'zwembad', 'bosbad', 'buitenbad', 'binnenbad', 'zwemparadijs',
+  'strand', 'meer', 'plas', 'recreatieplas', 'natuurgebied', 'wandelgebied',
+  'bezoekerscentrum', 'informatiecentrum', 'restaurant', 'eetcafe', 'cafe',
+  'cafetaria', 'snackbar', 'bistro', 'brasserie', 'pannenkoekenhuis',
+  'ijssalon', 'koffie', 'salon', 'speelboerderij', 'aquarium',
+]);
 function nameTokens(s) {
   return String(s || '').toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -719,9 +733,14 @@ function namesMatch(poiName, gname) {
   const aj = a.join(' ');
   const bj = b.join(' ');
   if (bj.includes(aj) || aj.includes(bj)) return true;
-  const matched = a.filter(t => b.some(u =>
+  // Alleen identiteitswoorden vergelijken; bestaat de naam uitsluitend
+  // uit soortwoorden, dan valt er niets te verifi\u00ebren \u2014 dan tellen ze
+  // alsnog allemaal mee.
+  let sig = a.filter(t => !GENERIC_NAME_TOKENS.has(t));
+  if (!sig.length) sig = a;
+  const matched = sig.filter(t => b.some(u =>
     t === u || (t.length >= 5 && u.length >= 5 && (t.startsWith(u) || u.startsWith(t))))).length;
-  return matched / a.length >= 0.65;
+  return matched / sig.length >= 0.65;
 }
 
 // Zet gecachte/opgehaalde rating-data om naar wat de payload mag tonen:
@@ -868,6 +887,16 @@ async function enrichWithRatings(payload) {
       (b.rating || 0) - (a.rating || 0)
       || (b.ratingCount || 0) - (a.ratingCount || 0)
       || a.distanceKm - b.distanceKm);
+    // Meerdere OSM-objecten kunnen op dezelfde Google-vermelding
+    // uitkomen (deel-attracties van Orvelte → 'Monumentendorp Orvelte');
+    // toon elke vermelding maar één keer.
+    const seenNames = new Set();
+    cat.pois = cat.pois.filter(p => {
+      const k = String(p.gname || p.name).toLowerCase();
+      if (seenNames.has(k)) return false;
+      seenNames.add(k);
+      return true;
+    });
   }
   payload.categories = payload.categories.filter(c => c.pois.length);
   return payload;
