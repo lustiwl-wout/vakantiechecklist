@@ -305,9 +305,10 @@ const PLACES_CATEGORIES = [
   { key: 'aquarium', label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip', radiusKm: 35, types: ['aquarium'], expectPt: ['aquarium', 'zoo'] },
   { key: 'waterpark', label: 'Zwembaden & waterparken', ages: 'alle leeftijden', activity: 'pool', radiusKm: 30, types: ['water_park'], text: 'zwembad' },
   { key: 'nature', label: 'Natuur & wandelgebieden', ages: 'alle leeftijden', activity: 'hiking', radiusKm: 35, types: ['national_park', 'hiking_area'] },
-  // Bewust zónder art_gallery: galerieën zijn verkoopruimtes, geen
-  // vakantie-uitje. Grote kunstmusea dragen het museum-type gewoon.
-  { key: 'museum', label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural', radiusKm: 25, types: ['museum'] },
+  { key: 'museum', label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural', radiusKm: 25, types: ['museum'], expectPt: null },
+  // Galerieën zijn een eigen categorie die de frontend standaard
+  // verbergt (het zijn verkoopruimtes) — wie wil, zet hem aan.
+  { key: 'gallery', label: 'Galerieën', ages: 'volwassenen', activity: 'cultural', radiusKm: 20, types: ['art_gallery'] },
   { key: 'musical', label: 'Musicals', ages: 'vanaf ± 6 jaar', activity: 'cultural', radiusKm: 25, text: 'musical theater', strictType: 'performing_arts_theater' },
   { key: 'theatre', label: 'Theaters & voorstellingen', ages: 'vanaf ± 6 jaar', activity: 'cultural', radiusKm: 20, types: ['performing_arts_theater'] },
   { key: 'attraction', label: 'Bezienswaardigheden & uitjes', ages: 'alle leeftijden', activity: 'daytrip', radiusKm: 20, types: ['tourist_attraction'] },
@@ -369,7 +370,7 @@ function updateNeighboursLater(lat, lng, attempt = 1) {
 
 // Alleen ophogen als de categorie-opzet verandert en de gecachte data
 // dus soorten mist. Weergave-/filterwijzigingen draaien bij het lezen.
-const PLACES_VERSION = 3; // v3: businessStatus (v2: primaryType)
+const PLACES_VERSION = 4; // v4: galerie-categorie (v3: businessStatus, v2: primaryType)
 
 // Sommige bedrijven zijn geen uitje maar duiken wel op in de
 // resultaten: een boerderijcamping met dieren telt bij Google soms als
@@ -388,9 +389,6 @@ const EXCLUDED_PRIMARY_TYPES = new Set([
   // museum (Harwi-geval)
   'garden_center', 'home_goods_store', 'furniture_store',
   'home_improvement_store', 'gift_shop', 'store',
-  // galerieën zijn verkoopruimtes — je sleept geen beeld of schilderij
-  // mee van je vakantieadres
-  'art_gallery', 'art_studio',
 ]);
 const EXCLUDED_NAME_RE = /\b(camping|kamperen|minicamping|boerderijcamping|groepsaccommodatie|bed\s*&\s*breakfast|b&b|hostel|dierenhotel|dierenpension|hondenpension|kattenpension|dierenasiel|dierenkliniek|dierenarts|trimsalon|hondenschool)\b|tuinbeelden|tuincentrum|woonwinkel|meubel|lijstenmakerij/i;
 function isExcludedPlace(p) {
@@ -479,6 +477,27 @@ function buildPayload(lat, lng, raw) {
   const cats = {};
   for (const [k, list] of Object.entries(raw.cats)) cats[k] = [...(list || [])];
   cats.nature = cats.nature || [];
+
+  // Galerie als hoofdtype → naar de galerie-categorie, waar hij ook
+  // gevonden werd (een verkoop-galerie met museum-bijcategorie hoort
+  // niet tussen de musea).
+  cats.gallery = cats.gallery || [];
+  const galNames = new Set(cats.gallery.map(p => p.name.toLowerCase()));
+  for (const k of Object.keys(cats)) {
+    if (k === 'gallery') continue;
+    const stay = [];
+    for (const p of cats[k]) {
+      if (p.pt === 'art_gallery' || p.pt === 'art_studio') {
+        if (!galNames.has(p.name.toLowerCase())) {
+          cats.gallery.push(p);
+          galNames.add(p.name.toLowerCase());
+        }
+      } else {
+        stay.push(p);
+      }
+    }
+    cats[k] = stay;
+  }
   const natureNames = new Set(cats.nature.map(p => p.name.toLowerCase()));
   for (const k of ['zoo', 'themepark', 'aquarium']) {
     if (!cats[k]) continue;
@@ -648,6 +667,53 @@ function prefetchNearby(lat, lng, attempt = 1) {
       }
     });
 }
+
+// Eigen categorie: één vrije Places-zoekopdracht rond de bestemming
+// (label + zoekterm uit de categorie-instellingen van de checklist).
+// Zelfde kwaliteitslat (open + 25+ reviews), maar géén uitsluitfilter:
+// wie bewust 'Campings' als categorie aanmaakt, wil die ook zien.
+router.get('/custom', async (req, res) => {
+  const c = parseCoords(req);
+  const q = String(req.query.q || '').trim().slice(0, 60);
+  if (!c || q.length < 2) return res.status(400).json({ error: 'lat, lng en q zijn verplicht' });
+
+  const key = `custom:v1:${q.toLowerCase()}:${c.lat.toFixed(2)}:${c.lng.toFixed(2)}`;
+  const cached = await cacheGetAny(key, TTL_NEARBY);
+  let list = cached ? cached.data : null;
+  if (!cached || !cached.fresh) {
+    try {
+      list = await placesCall('places:searchText', {
+        textQuery: q,
+        maxResultCount: 20,
+        languageCode: 'nl',
+        locationBias: { circle: { center: { latitude: c.lat, longitude: c.lng }, radius: 30000 } },
+      });
+      await cacheSet(key, list);
+    } catch (err) {
+      if (!list) return res.status(502).json({ error: `Zoeken mislukt: ${err.message}` });
+      // Verouderde data is beter dan een foutmelding.
+    }
+  }
+
+  const pois = (list || [])
+    .filter(p => !p.bs || p.bs === 'OPERATIONAL')
+    .map(p => ({
+      name: p.name,
+      lat: p.la,
+      lng: p.lo,
+      rating: p.rating,
+      ratingCount: p.count,
+      distanceKm: Math.round(haversineKm(c.lat, c.lng, p.la, p.lo) * 10) / 10,
+    }))
+    .filter(p => p.rating && p.ratingCount >= MIN_REVIEWS)
+    .filter(p => p.distanceKm <= 45)
+    .sort((a, b) =>
+      (b.rating || 0) - (a.rating || 0)
+      || (b.ratingCount || 0) - (a.ratingCount || 0)
+      || a.distanceKm - b.distanceKm)
+    .slice(0, 20);
+  res.json({ pois });
+});
 
 // Diagnose: wat vindt Google Places rond dit punt voor deze zoekterm,
 // en waarom zou het wel/niet getoond worden? Voor het onderzoeken van

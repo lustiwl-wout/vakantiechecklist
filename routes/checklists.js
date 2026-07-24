@@ -189,6 +189,26 @@ router.patch('/:id', async (req, res) => {
   if ('rentalCar' in req.body) set('rental_car', req.body.rentalCar === true);
   if ('lat' in req.body) set('lat', Number.isFinite(Number(req.body.lat)) && Math.abs(req.body.lat) <= 90 ? Number(req.body.lat) : null);
   if ('lng' in req.body) set('lng', Number.isFinite(Number(req.body.lng)) && Math.abs(req.body.lng) <= 180 ? Number(req.body.lng) : null);
+  if ('poiPrefs' in req.body) {
+    // Omgeving-voorkeuren: welke categorieën zichtbaar zijn + eigen
+    // categorieën (label + Google-zoekterm).
+    const src = (req.body.poiPrefs && typeof req.body.poiPrefs === 'object') ? req.body.poiPrefs : {};
+    const clean = {
+      hidden: Array.isArray(src.hidden)
+        ? [...new Set(src.hidden.map(v => String(v).slice(0, 40)))].slice(0, 30) : [],
+      custom: Array.isArray(src.custom)
+        ? src.custom
+          .map(x => ({
+            label: String((x && x.label) || '').trim().slice(0, 40),
+            query: String((x && x.query) || '').trim().slice(0, 60),
+          }))
+          .filter(x => x.label && x.query)
+          .slice(0, 10)
+        : [],
+    };
+    updates.push(`poi_prefs = $${p++}::jsonb`);
+    params.push(JSON.stringify(clean));
+  }
   if ('travelerOrder' in req.body) {
     // Weergavevolgorde van de reizigers-groepen (incl. 'Algemeen'),
     // gezet door de sleepbare tabs.

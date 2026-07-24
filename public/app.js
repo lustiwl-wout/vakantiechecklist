@@ -2106,6 +2106,27 @@ async function renderFamily(epoch) {
 
 // ---------- omgevingsadvies ----------
 
+// Alle standaardcategorieën van de Omgeving-pagina (spiegel van de
+// backend) — voor de categorie-kiezer, ook als een categorie in deze
+// buurt (nog) leeg is. Galerieën staan standaard uit: verkoopruimtes.
+const OMGEVING_CATEGORIES = [
+  { key: 'themepark', label: 'Pretparken' },
+  { key: 'zoo', label: 'Dierentuinen' },
+  { key: 'pettingzoo', label: 'Kinderboerderijen' },
+  { key: 'aquarium', label: 'Aquaria' },
+  { key: 'waterpark', label: 'Zwembaden & waterparken' },
+  { key: 'nature', label: 'Natuur & wandelgebieden' },
+  { key: 'museum', label: 'Musea' },
+  { key: 'gallery', label: 'Galerieën' },
+  { key: 'musical', label: 'Musicals' },
+  { key: 'theatre', label: 'Theaters & voorstellingen' },
+  { key: 'attraction', label: 'Bezienswaardigheden & uitjes' },
+  { key: 'beach', label: 'Stranden & zwemplassen' },
+  { key: 'tours', label: 'Excursies & boottochten' },
+  { key: 'restaurant', label: 'Restaurants' },
+];
+const DEFAULT_HIDDEN_CATS = ['gallery'];
+
 // Welke leeftijdsgroepen zijn er in dit gezelschap? Bepaalt de aanraders.
 function fitsTravelers(catKey, travelers) {
   const ages = (travelers || []).map(t => (t.age != null ? t.age : 30));
@@ -2120,6 +2141,7 @@ function fitsTravelers(catKey, travelers) {
     case 'museum': return anySchoolPlus;
     case 'theatre': return anySchoolPlus;
     case 'musical': return anySchoolPlus;
+    case 'gallery': return false;
     default: return true; // dierentuin, aquarium, strand: iedereen
   }
 }
@@ -2296,6 +2318,16 @@ async function renderOmgeving(id, epoch) {
         },
       }, '🔄 Vernieuwen'),
     ),
+    el('div', { style: 'display: flex; justify-content: flex-end; margin-top: 6px' },
+      el('button', {
+        class: 'btn btn-sm',
+        title: 'Kies welke categorieën je ziet en maak eigen categorieën',
+        onclick: () => {
+          catPrefsCard.hidden = !catPrefsCard.hidden;
+          if (!catPrefsCard.hidden) catPrefsCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        },
+      }, '⚙️ Categorieën'),
+    ),
     el('h1', { style: 'margin-top: 8px' }, `In de buurt van ${c.destination || 'je bestemming'}`),
     el('p', { class: 'muted' },
       'Uitjes binnen ± 35 km van je bestemming, afgestemd op je reisgezelschap. ',
@@ -2341,15 +2373,15 @@ async function renderOmgeving(id, epoch) {
     ));
   }
 
-  if (!geo.categories.length) {
-    app.append(el('div', { class: 'card empty' },
-      'Geen uitjes gevonden binnen 35 km. Probeer het later opnieuw, of verken de omgeving ter plekke!'));
-    return;
-  }
-
   // Aanraders voor dit gezelschap eerst.
   const sorted = [...geo.categories].sort((a, b) =>
     Number(fitsTravelers(b.key, c.travelers)) - Number(fitsTravelers(a.key, c.travelers)));
+
+  // Categorie-voorkeuren van deze checklist: wat is zichtbaar, plus
+  // eigen categorieën (label + Google-zoekterm).
+  const prefs = (c.poi_prefs && typeof c.poi_prefs === 'object') ? c.poi_prefs : {};
+  let hiddenCats = new Set(Array.isArray(prefs.hidden) ? prefs.hidden : DEFAULT_HIDDEN_CATS);
+  let customCats = Array.isArray(prefs.custom) ? prefs.custom : [];
 
   // Bijgehouden overgeslagen locaties per checklist (blijft bewaard bij herladen).
   const dismissKey = `poi_dismissed_${id}`;
@@ -2359,14 +2391,21 @@ async function renderOmgeving(id, epoch) {
     localStorage.setItem(dismissKey, JSON.stringify([...dismissed]));
   }
 
-  for (const cat of sorted) {
-    const fit = fitsTravelers(cat.key, c.travelers);
-    const already = currentActivities.has(cat.activity);
+  function buildCategoryCard(cat, opts = {}) {
+    const fit = !opts.custom && fitsTravelers(cat.key, c.travelers);
+    const already = cat.activity ? currentActivities.has(cat.activity) : false;
 
     const poiListEl = el('ul', { class: 'poi-list' });
 
     const renderPoiList = () => {
       clear(poiListEl);
+      if (!cat.pois.length) {
+        poiListEl.append(el('li', { class: 'poi-all-seen' },
+          opts.custom
+            ? 'Niets met genoeg beoordelingen gevonden voor deze zoekterm in de buurt.'
+            : 'Niets gevonden in deze buurt.'));
+        return;
+      }
       const visible = cat.pois.filter(p => !dismissed.has(p.name));
       if (visible.length === 0) {
         poiListEl.append(el('li', { class: 'poi-all-seen' },
@@ -2421,9 +2460,9 @@ async function renderOmgeving(id, epoch) {
         el('h2', { style: 'margin: 0' }, cat.label),
         fit ? el('span', { class: 'badge-fit' }, 'aanrader voor jullie') : null,
       ),
-      el('p', { class: 'muted', style: 'margin: 2px 0 10px' }, `Leuk voor: ${cat.ages}`),
+      cat.ages ? el('p', { class: 'muted', style: 'margin: 2px 0 10px' }, `Leuk voor: ${cat.ages}`) : null,
       poiListEl,
-      el('button', {
+      cat.activity ? el('button', {
         class: 'btn btn-sm' + (already ? '' : ' btn-primary'),
         disabled: already,
         onclick: async (e) => {
@@ -2439,10 +2478,122 @@ async function renderOmgeving(id, epoch) {
             }
           } catch (err) { e.target.disabled = false; toast(err.message); }
         },
-      }, already ? 'Staat al op je programma' : '+ Zet op programma — vul mijn inpaklijst aan'),
+      }, already ? 'Staat al op je programma' : '+ Zet op programma — vul mijn inpaklijst aan') : null,
     );
-    app.append(card);
+    return card;
   }
+
+  // Categorie-kiezer: standaardcategorieën aan/uit + eigen categorieën.
+  const catPrefsCard = (() => {
+    const boxes = OMGEVING_CATEGORIES.map(sc => ({
+      key: sc.key,
+      cb: el('input', { type: 'checkbox', checked: !hiddenCats.has(sc.key) }),
+      label: sc.label,
+    }));
+    const customList = customCats.map(x => ({ ...x }));
+    const customBox = el('div', {});
+    function paintCustom() {
+      clear(customBox);
+      customList.forEach((cc, i) => {
+        customBox.append(el('div', { class: 'traveler' },
+          el('input', {
+            type: 'text', value: cc.label, placeholder: 'Naam (bv. Golfbanen)', maxlength: '40',
+            oninput: (e) => { customList[i].label = e.target.value; },
+          }),
+          el('input', {
+            type: 'text', value: cc.query, placeholder: 'Zoekterm (bv. golfbaan)', maxlength: '60',
+            oninput: (e) => { customList[i].query = e.target.value; },
+          }),
+          el('button', {
+            type: 'button', class: 'btn btn-sm btn-ghost', title: 'Verwijderen',
+            onclick: () => { customList.splice(i, 1); paintCustom(); },
+          }, '✕'),
+        ));
+      });
+      customBox.append(el('button', {
+        type: 'button', class: 'btn btn-sm',
+        onclick: () => { customList.push({ label: '', query: '' }); paintCustom(); },
+      }, '+ Eigen categorie'));
+    }
+    paintCustom();
+    return el('div', { class: 'card', hidden: true },
+      el('h2', { style: 'margin-top: 0' }, 'Categorieën'),
+      el('p', { class: 'muted', style: 'margin-top: 0' },
+        'Kies wat je wilt zien. Eigen categorieën zoeken via Google rond je bestemming — ',
+        'geef een naam en een zoekterm (bv. "escape room" of "wijngaard").'),
+      el('div', { class: 'checkbox-group' },
+        ...boxes.map(b => el('label', {}, b.cb, ` ${b.label}`))),
+      el('h2', {}, 'Eigen categorieën'),
+      customBox,
+      el('div', { class: 'actions' },
+        el('button', {
+          class: 'btn btn-sm btn-primary',
+          onclick: async (e) => {
+            e.target.disabled = true;
+            const hidden = boxes.filter(b => !b.cb.checked).map(b => b.key);
+            const custom = customList
+              .map(x => ({ label: x.label.trim(), query: x.query.trim() }))
+              .filter(x => x.label && x.query);
+            try {
+              await api(`/api/checklists/${id}`, { method: 'PATCH', body: { poiPrefs: { hidden, custom } } });
+              c.poi_prefs = { hidden, custom };
+              hiddenCats = new Set(hidden);
+              customCats = custom;
+              catPrefsCard.hidden = true;
+              paintCats();
+              paintCustomCards();
+            } catch (err) { toast(err.message); }
+            e.target.disabled = false;
+          },
+        }, 'Opslaan'),
+      ),
+    );
+  })();
+
+  const catsWrap = el('div', {});
+  const customWrap = el('div', {});
+  app.append(catPrefsCard, catsWrap, customWrap);
+
+  function paintCats() {
+    clear(catsWrap);
+    if (!sorted.length && !customCats.length) {
+      catsWrap.append(el('div', { class: 'card empty' },
+        'Geen uitjes gevonden binnen 35 km. Probeer het later opnieuw, of verken de omgeving ter plekke!'));
+      return;
+    }
+    const shown = sorted.filter(cat => !hiddenCats.has(cat.key));
+    if (!shown.length && !customCats.length) {
+      catsWrap.append(el('div', { class: 'card empty' },
+        'Alle categorieën staan uit — zet er via ⚙️ Categorieën een paar aan.'));
+      return;
+    }
+    for (const cat of shown) catsWrap.append(buildCategoryCard(cat));
+  }
+
+  function paintCustomCards() {
+    clear(customWrap);
+    for (const cc of customCats) {
+      const holder = el('div', { class: 'card poi-card' },
+        el('h2', { style: 'margin: 0 0 8px' }, cc.label),
+        el('p', { class: 'muted' }, 'Zoeken…'));
+      customWrap.append(holder);
+      api(`/api/geo/custom?lat=${c.lat}&lng=${c.lng}&q=${encodeURIComponent(cc.query)}`)
+        .then(r => {
+          if (isStale(epoch)) return;
+          holder.replaceWith(buildCategoryCard(
+            { key: `custom:${cc.query}`, label: cc.label, ages: null, activity: null, pois: r.pois || [] },
+            { custom: true },
+          ));
+        })
+        .catch(err => {
+          const pEl = holder.querySelector('p');
+          if (pEl) pEl.textContent = `Kon niet laden: ${err.message}`;
+        });
+    }
+  }
+
+  paintCats();
+  paintCustomCards();
 }
 
 // ---------- routing ----------

@@ -133,6 +133,7 @@ async function init() {
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS use_quantities BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS traveler_order JSONB NOT NULL DEFAULT '[]';
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS share_token TEXT;
+    ALTER TABLE checklists ADD COLUMN IF NOT EXISTS poi_prefs JSONB NOT NULL DEFAULT '{}';
     CREATE UNIQUE INDEX IF NOT EXISTS idx_checklists_share ON checklists(share_token) WHERE share_token IS NOT NULL;
   `);
 
