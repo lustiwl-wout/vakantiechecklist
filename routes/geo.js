@@ -372,6 +372,19 @@ out tags 10;`, 20000));
   }
 }
 
+function retryNeighboursLater(lat, lng, attempt = 1) {
+  if (attempt > 3) return;
+  setTimeout(async () => {
+    const nb = await fetchNeighbours(lat, lng);
+    if (nb === null) return retryNeighboursLater(lat, lng, attempt + 1);
+    const hit = await cacheGetAny(nearbyKey(lat, lng), TTL_NEARBY);
+    if (hit && hit.data && hit.data.cats) {
+      await cacheSet(nearbyKey(lat, lng), { ...hit.data, neighbours: nb });
+      console.log('[geo/borders] buurlanden alsnog opgeslagen voor', nearbyKey(lat, lng));
+    }
+  }, attempt * 10 * 60 * 1000);
+}
+
 // ---- omgeving ophalen en cachen ----
 
 // Alleen ophogen als de categorie-opzet verandert en de gecachte data
@@ -422,6 +435,10 @@ async function fetchNearbyRaw(lat, lng) {
     neighbours: nb ?? ((prev && prev.data && Array.isArray(prev.data.neighbours)) ? prev.data.neighbours : []),
   };
   await cacheSet(nearbyKey(lat, lng), raw);
+  // Grens-detectie mislukt? Op de achtergrond opnieuw proberen en het
+  // cache-record bijwerken — anders mist een nieuwe locatie bij de
+  // grens 30 dagen lang de buurland-hint (milieuvignet).
+  if (nb === null) retryNeighboursLater(lat, lng);
   const total = Object.values(cats).reduce((n, a) => n + a.length, 0);
   console.log(`[geo/cache] omgeving opgeslagen (Places): ${nearbyKey(lat, lng)} (${total} plekken)`);
   return raw;
