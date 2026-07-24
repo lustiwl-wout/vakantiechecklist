@@ -295,10 +295,14 @@ async function placesCall(path, body) {
 // De 'activity' koppelt aan de checklist-activiteiten zodat 'Zet op
 // mijn programma' de paklijst kan bijwerken.
 const PLACES_CATEGORIES = [
-  { key: 'themepark', label: 'Pretparken', ages: 'kinderen en tieners', activity: 'themepark', radiusKm: 35, types: ['amusement_park'] },
-  { key: 'zoo', label: 'Dierentuinen', ages: 'alle leeftijden', activity: 'daytrip', radiusKm: 35, types: ['zoo'] },
+  // expectPt: het prímaire Google-type moet passen. Zoeken op type
+  // matcht namelijk óók bijcategorieën — zo dook een natuurgebied
+  // (Mepperhooilanden) op als dierentuin. Onbekend primair type mag
+  // altijd door (oudere cache-data).
+  { key: 'themepark', label: 'Pretparken', ages: 'kinderen en tieners', activity: 'themepark', radiusKm: 35, types: ['amusement_park'], expectPt: ['amusement_park', 'amusement_center', 'water_park'] },
+  { key: 'zoo', label: 'Dierentuinen', ages: 'alle leeftijden', activity: 'daytrip', radiusKm: 35, types: ['zoo'], expectPt: ['zoo', 'wildlife_park', 'petting_zoo', 'aquarium'] },
   { key: 'pettingzoo', label: 'Kinderboerderijen', ages: 'jonge kinderen', activity: 'daytrip', radiusKm: 15, text: 'kinderboerderij' },
-  { key: 'aquarium', label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip', radiusKm: 35, types: ['aquarium'] },
+  { key: 'aquarium', label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip', radiusKm: 35, types: ['aquarium'], expectPt: ['aquarium', 'zoo'] },
   { key: 'waterpark', label: 'Zwembaden & waterparken', ages: 'alle leeftijden', activity: 'pool', radiusKm: 30, types: ['water_park'], text: 'zwembad' },
   { key: 'nature', label: 'Natuur & wandelgebieden', ages: 'alle leeftijden', activity: 'hiking', radiusKm: 35, types: ['national_park', 'hiking_area'] },
   { key: 'museum', label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural', radiusKm: 25, types: ['museum', 'art_gallery'] },
@@ -456,6 +460,8 @@ function buildPayload(lat, lng, raw) {
       // (Tijdelijk) gesloten? Dan heeft tonen geen zin. Zonder status
       // (oudere cache) tonen we gewoon.
       .filter(p => !p.bs || p.bs === 'OPERATIONAL')
+      // Primair type moet passen bij de categorie (waar gedefinieerd).
+      .filter(p => !p.pt || !def.expectPt || def.expectPt.includes(p.pt))
       .map(p => ({
         name: p.name,
         lat: p.la,
