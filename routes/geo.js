@@ -236,7 +236,19 @@ const POI_CATEGORIES = [
   { key: 'restaurant', selectors: ['["amenity"="restaurant"]'], radiusKm: 8, cap: 40, label: 'Restaurants', ages: 'alle leeftijden', activity: 'nightlife', gtype: 'restaurant' },
 ];
 
-function buildOverpassQuery(lat, lng, timeoutS = 25) {
+// De 'zware' selectors maken de query in extreem dichte gebieden
+// (Londen, Parijs) onbetaalbaar: elk benoemd zwembadje, een naam-regex
+// over duizenden sportcentra, elk watervlak met een wiki-link. De lite-
+// variant laat ze weg zodat er in elk geval íets geladen kan worden;
+// de volledige query volgt dan op de achtergrond.
+const HEAVY_SELECTORS = new Set([
+  '["leisure"="swimming_pool"]',
+  '["leisure"="sports_centre"]["sport"="swimming"]',
+  '["leisure"="sports_centre"]["name"~"zwembad|bosbad|zwemparadijs",i]',
+  '["natural"="water"]["wikipedia"]',
+]);
+
+function buildOverpassQuery(lat, lng, timeoutS = 25, lite = false) {
   // Een globale bounding box maakt de query fundamenteel goedkoop: elke
   // tag-zoekopdracht blijft binnen het 35km-gebied in plaats van tegen
   // wereldwijde indexen aan te lopen. Zonder bbox viel de eerste
@@ -252,9 +264,11 @@ function buildOverpassQuery(lat, lng, timeoutS = 25) {
   // de andere tag-soorten aan de beurt zijn, en valt bv. een bosbad
   // verderop achter de afkap.
   const blocks = POI_CATEGORIES.flatMap(c =>
-    c.selectors.map(s =>
-      `(\n  nwr${s}["name"](around:${c.radiusKm * 1000},${lat},${lng});\n);\nout center ${c.cap};`
-    )
+    c.selectors
+      .filter(s => !lite || !HEAVY_SELECTORS.has(s))
+      .map(s =>
+        `(\n  nwr${s}["name"](around:${c.radiusKm * 1000},${lat},${lng});\n);\nout center ${c.cap};`
+      )
   ).join('\n');
   return `[out:json][timeout:${timeoutS}][bbox:${bbox}];
 ${blocks}
@@ -543,9 +557,23 @@ function nearbyKey(lat, lng) {
 // wachten dan een gebruiker die naar een spinner kijkt — drukke Overpass-
 // servers halen het dan vaak alsnog.
 async function fetchNearbyRaw(lat, lng, opts = {}) {
-  const data = opts.patient
-    ? await overpassFetch(buildOverpassQuery(lat, lng, 55), 65000)
-    : await overpassFetch(buildOverpassQuery(lat, lng));
+  let data;
+  let partial = false;
+  try {
+    data = opts.patient
+      ? await overpassFetch(buildOverpassQuery(lat, lng, 55), 65000)
+      : await overpassFetch(buildOverpassQuery(lat, lng));
+  } catch (err) {
+    // Volledige query te zwaar (extreem dicht gebied zoals Londen) of
+    // servers overbelast: probeer de lichte variant, zodat er in elk
+    // geval íets te tonen valt. partial=true zorgt dat de volledige
+    // query op de achtergrond opnieuw geprobeerd blijft worden.
+    console.warn('[geo/nearby] volledige query mislukt, probeer lichte variant:', err.message);
+    data = opts.patient
+      ? await overpassFetch(buildOverpassQuery(lat, lng, 40, true), 50000)
+      : await overpassFetch(buildOverpassQuery(lat, lng, 20, true), 25000);
+    partial = true;
+  }
 
   // Overpass geeft bij een timeout vaak HTTP 200 met een 'remark' en
   // (vrijwel) lege elements terug. Dat is een fout, geen 'niets in de
@@ -558,6 +586,7 @@ async function fetchNearbyRaw(lat, lng, opts = {}) {
 
   const raw = {
     qv: QUERY_VERSION,
+    ...(partial ? { partial: true } : {}),
     els: elements
       .map(el => ({
         la: el.lat ?? (el.center && el.center.lat) ?? null,
@@ -940,9 +969,9 @@ router.get('/nearby/ready', async (req, res) => {
   if (!c) return res.status(400).json({ error: 'Ongeldige coördinaten' });
   const cached = await cacheGetAny(nearbyKey(c.lat, c.lng), TTL_NEARBY);
   const usable = usableRaw(cached);
-  // Verlopen of oudere query-versie maar bruikbaar telt als 'klaar'
+  // Verlopen, oudere query-versie of een lite-resultaat telt als 'klaar'
   // (we serveren die data direct) en start meteen de verversing.
-  if (usable && (!cached.fresh || !currentQv(cached))) backgroundRefresh(c.lat, c.lng);
+  if (usable && (!cached.fresh || !currentQv(cached) || cached.data.partial)) backgroundRefresh(c.lat, c.lng);
   res.json({ ready: usable });
 });
 
@@ -1024,7 +1053,7 @@ router.get('/nearby', async (req, res) => {
   // voor de gebruiker) en op de achtergrond automatisch verversen.
   // Alleen de Vernieuwen-knop (refresh=1) wacht op verse data.
   if (!refresh && usable) {
-    if (!cached.fresh || !currentQv(cached)) backgroundRefresh(c.lat, c.lng);
+    if (!cached.fresh || !currentQv(cached) || cached.data.partial) backgroundRefresh(c.lat, c.lng);
     return respondNearby(res, c.lat, c.lng, cached.data);
   }
 
