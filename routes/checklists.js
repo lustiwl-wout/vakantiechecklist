@@ -390,6 +390,24 @@ router.post('/:id/items/bulk-delete', async (req, res) => {
   res.json({ ok: true, deleted: rows.length });
 });
 
+// Categorie hernoemen: één batch-update over alle items in die categorie.
+// 'Overig' is de weergavenaam van items zonder categorie, dus die tellen
+// dan ook mee.
+router.post('/:id/categories/rename', async (req, res) => {
+  const checklist = await loadOwnedChecklist(req.userId, req.params.id);
+  if (!checklist) return res.status(404).json({ error: 'Checklist niet gevonden' });
+  const from = String(req.body.from || '').trim().slice(0, 60);
+  const to = String(req.body.to || '').trim().slice(0, 60);
+  if (!from || !to) return res.status(400).json({ error: 'Naam is verplicht' });
+  const result = await pool.query(
+    `UPDATE items SET category = $3
+      WHERE checklist_id = $1
+        AND (category = $2 OR ($2 = 'Overig' AND category IS NULL))`,
+    [checklist.id, from, to]
+  );
+  res.json({ ok: true, renamed: result.rowCount });
+});
+
 router.post('/:id/reorder', async (req, res) => {
   const checklist = await loadOwnedChecklist(req.userId, req.params.id);
   if (!checklist) return res.status(404).json({ error: 'Checklist niet gevonden' });

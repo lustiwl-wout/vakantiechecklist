@@ -523,6 +523,8 @@ textarea { min-height: 80px; resize: vertical; }
 }
 .qty-print { display: none; color: var(--muted); }
 .add-item .qty-input { flex: 0 0 64px; }
+/* Categorie-invoer: vrij tekstveld, maar qua breedte een 'select'. */
+.add-item .cat-input { flex: 0 1 160px; }
 
 .drag-handle {
   cursor: grab;
