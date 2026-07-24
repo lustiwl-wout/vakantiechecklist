@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const { pool } = require('../db');
 const { requireAuth } = require('../auth');
 const { generateItems } = require('../templates');
@@ -188,6 +189,13 @@ router.patch('/:id', async (req, res) => {
   if ('rentalCar' in req.body) set('rental_car', req.body.rentalCar === true);
   if ('lat' in req.body) set('lat', Number.isFinite(Number(req.body.lat)) && Math.abs(req.body.lat) <= 90 ? Number(req.body.lat) : null);
   if ('lng' in req.body) set('lng', Number.isFinite(Number(req.body.lng)) && Math.abs(req.body.lng) <= 180 ? Number(req.body.lng) : null);
+  if ('travelerOrder' in req.body) {
+    // Weergavevolgorde van de reizigers-groepen (incl. 'Algemeen'),
+    // gezet door de sleepbare tabs.
+    updates.push(`traveler_order = $${p++}::jsonb`);
+    params.push(JSON.stringify(Array.isArray(req.body.travelerOrder)
+      ? req.body.travelerOrder.map(v => String(v).slice(0, 60)).slice(0, 30) : []));
+  }
   if ('borderCountries' in req.body) {
     updates.push(`border_countries = $${p++}::jsonb`);
     params.push(JSON.stringify(cleanBorderCountries(req.body.borderCountries)));
@@ -285,6 +293,26 @@ router.delete('/:id', async (req, res) => {
     [req.params.id, req.userId]
   );
   if (result.rowCount === 0) return res.status(404).json({ error: 'Checklist niet gevonden' });
+  res.json({ ok: true });
+});
+
+// Delen: alleen-lezen link aan/uit. De token is onraadbaar (128 bits);
+// de publieke kant leeft in routes/share.js.
+router.post('/:id/share', async (req, res) => {
+  const checklist = await loadOwnedChecklist(req.userId, req.params.id);
+  if (!checklist) return res.status(404).json({ error: 'Checklist niet gevonden' });
+  let token = checklist.share_token;
+  if (!token) {
+    token = crypto.randomBytes(16).toString('hex');
+    await pool.query('UPDATE checklists SET share_token = $2 WHERE id = $1', [checklist.id, token]);
+  }
+  res.json({ token });
+});
+
+router.delete('/:id/share', async (req, res) => {
+  const checklist = await loadOwnedChecklist(req.userId, req.params.id);
+  if (!checklist) return res.status(404).json({ error: 'Checklist niet gevonden' });
+  await pool.query('UPDATE checklists SET share_token = NULL WHERE id = $1', [checklist.id]);
   res.json({ ok: true });
 });
 

@@ -131,6 +131,9 @@ async function init() {
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS use_categories BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS use_travelers BOOLEAN NOT NULL DEFAULT TRUE;
     ALTER TABLE checklists ADD COLUMN IF NOT EXISTS use_quantities BOOLEAN NOT NULL DEFAULT TRUE;
+    ALTER TABLE checklists ADD COLUMN IF NOT EXISTS traveler_order JSONB NOT NULL DEFAULT '[]';
+    ALTER TABLE checklists ADD COLUMN IF NOT EXISTS share_token TEXT;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_checklists_share ON checklists(share_token) WHERE share_token IS NOT NULL;
   `);
 
   // Items beginnen altijd met een hoofdletter; bestaande items met een

@@ -86,9 +86,8 @@ router.put('/:id', async (req, res) => {
     }))
     .filter(it => it.text)
     .slice(0, 500);
-  if (!cleaned.length) {
-    return res.status(400).json({ error: 'Een sjabloon zonder items is niet zinvol — verwijder het dan liever' });
-  }
+  // Leeg mag: de editor slaat elke wijziging direct op, dus 'even leeg'
+  // is een normale tussenstand.
 
   const { rows } = await pool.query(
     'UPDATE templates SET name = $2, items = $3::jsonb WHERE id = $1 RETURNING id, name',

@@ -248,6 +248,7 @@ function renderNav() {
   clear(navEl);
   if (currentUser) {
     navEl.append(
+      el('a', { href: '#/sjablonen', class: 'btn btn-sm btn-ghost' }, '📋 Sjablonen'),
       el('a', { href: '#/gezin', class: 'btn btn-sm btn-ghost' }, '👨‍👩‍👧 Gezin'),
       el('span', { class: 'who' }, currentUser.email),
       el('button', { class: 'btn btn-sm btn-ghost', onclick: logout }, 'Uitloggen')
@@ -715,7 +716,11 @@ async function renderNew(epoch) {
       'de lijst automatisch laten vullen op basis van je reis, en de omgeving verkennen.'),
     el('div', { class: 'card spaced' },
       el('div', { class: 'field' }, el('label', {}, 'Naam van de reis *'), nameIn),
-      el('div', { class: 'field' }, el('label', {}, 'Beginnen met'), tmplSel),
+      el('div', { class: 'field' },
+        el('label', {}, 'Beginnen met'), tmplSel,
+        el('p', { class: 'muted', style: 'margin: 4px 0 0' },
+          el('a', { href: '#/sjablonen' }, 'Sjablonen bekijken en bewerken →')),
+      ),
       el('div', { class: 'field' },
         el('label', {}, 'Welke functies wil je gebruiken?'),
         el('label', { class: 'checkbox-inline' }, catsCb, ' Categorieën — items gegroepeerd (Kleding, Documenten…)'),
@@ -731,46 +736,65 @@ async function renderNew(epoch) {
     ),
   );
 
-  // Sjabloonbeheer op dezelfde pagina: hier kies je ze, hier ruim je ze op.
-  let manageCard = null;
-  if (templates.length) {
-    const listEl = el('div', {});
-    for (const t of templates) {
-      const row = el('div', { class: 'traveler' },
-        el('span', { style: 'flex: 1' },
-          el('a', { href: `#/sjabloon/${t.id}`, title: 'Sjabloon bekijken en bewerken' }, t.name),
-          ' ', el('span', { class: 'muted' }, `(${t.count} items)`)),
-        el('a', { href: `#/sjabloon/${t.id}`, class: 'btn btn-sm' }, 'Bewerken'),
-        el('button', {
-          type: 'button', class: 'btn btn-sm btn-ghost', title: 'Sjabloon verwijderen',
-          onclick: async (e) => {
-            if (!confirm(`Sjabloon "${t.name}" verwijderen? Bestaande lijsten blijven staan.`)) return;
-            e.target.disabled = true;
-            try {
-              await api(`/api/templates/${t.id}`, { method: 'DELETE' });
-              row.remove();
-              [...tmplSel.options].find(o => o.value === String(t.id))?.remove();
-              toast('Sjabloon verwijderd');
-            } catch (err) { e.target.disabled = false; toast(err.message); }
-          },
-        }, '✕'),
-      );
-      listEl.append(row);
-    }
-    manageCard = el('div', { class: 'card', style: 'margin-top: 32px' },
-      el('h2', { style: 'margin-top: 0' }, 'Mijn sjablonen'),
-      el('p', { class: 'muted', style: 'margin-top: 0' },
-        'Een sjabloon maak je op een lijst zelf, met de knop "Sjabloon opslaan".'),
-      listEl,
-    );
-  }
-
   clear(app);
-  app.append(...[form, manageCard].filter(Boolean));
+  app.append(form);
 }
 
-// Sjabloon bekijken en bewerken: naam, items (tekst, categorie, aantal,
-// voor wie), items toevoegen/verwijderen, of het hele sjabloon weggooien.
+// Overzicht van alle sjablonen: inzien, bewerken, verwijderen.
+async function renderTemplates(epoch) {
+  clear(app);
+  app.append(el('p', { class: 'loading' }, 'Laden…'));
+  let templates = [];
+  try {
+    const r = await api('/api/templates');
+    templates = r.templates || [];
+  } catch (err) {
+    if (isStale(epoch)) return;
+    if (err.status === 401) return navigate('#/login');
+    return showError(err);
+  }
+  if (isStale(epoch)) return;
+
+  clear(app);
+  app.append(
+    el('h1', {}, 'Sjablonen'),
+    el('p', { class: 'muted' },
+      'Een sjabloon is een herbruikbare basislijst. Je maakt er één vanaf een checklist ',
+      '(⋯ → Sjabloon opslaan) en kiest hem daarna als startpunt bij een nieuwe checklist.'),
+  );
+
+  if (!templates.length) {
+    app.append(el('div', { class: 'card empty' },
+      el('p', {}, 'Nog geen sjablonen. Open een checklist en kies ⋯ → Sjabloon opslaan.')));
+    return;
+  }
+
+  for (const t of templates) {
+    app.append(el('div', { class: 'card checklist-card', style: 'display: flex; align-items: center; gap: 8px' },
+      el('div', { style: 'flex: 1; min-width: 0' },
+        el('div', { class: 'title' }, el('a', { href: `#/sjabloon/${t.id}` }, t.name)),
+        el('div', { class: 'meta' }, `${t.count} items`),
+      ),
+      el('a', { href: `#/sjabloon/${t.id}`, class: 'btn btn-sm' }, 'Bewerken'),
+      el('button', {
+        class: 'btn btn-sm btn-ghost', title: 'Sjabloon verwijderen',
+        onclick: async (e) => {
+          if (!confirm(`Sjabloon "${t.name}" verwijderen? Bestaande lijsten blijven staan.`)) return;
+          e.target.disabled = true;
+          try {
+            await api(`/api/templates/${t.id}`, { method: 'DELETE' });
+            e.target.closest('.card').remove();
+            toast('Sjabloon verwijderd');
+          } catch (err) { e.target.disabled = false; toast(err.message); }
+        },
+      }, '✕'),
+    ));
+  }
+}
+
+// Sjabloon bewerken — ziet eruit en werkt als de checklist zelf:
+// dezelfde toevoegbalk, groepering per categorie, klikken om te bewerken,
+// ✕ om te verwijderen. Elke wijziging wordt direct opgeslagen.
 async function renderTemplate(id, epoch) {
   clear(app);
   app.append(el('p', { class: 'loading' }, 'Laden…'));
@@ -786,100 +810,193 @@ async function renderTemplate(id, epoch) {
   if (isStale(epoch)) return;
 
   const local = (Array.isArray(t.items) ? t.items : []).map(x => ({ ...x }));
-  const errBox = el('div', { class: 'error' });
-  const nameIn = el('input', { type: 'text', value: t.name, maxlength: '80' });
+  const nameIn = el('input', { type: 'text', value: t.name, maxlength: '80', 'aria-label': 'Naam van het sjabloon' });
 
-  // Suggestielijsten uit het sjabloon zelf (vrij typen blijft mogelijk).
-  const catListId = `tmplcats-${id}`;
-  const travListId = `tmpltrav-${id}`;
-  const catDatalist = el('datalist', { id: catListId },
-    ...[...new Set(local.map(i => i.category).filter(Boolean))].map(v => el('option', { value: v })));
-  const travDatalist = el('datalist', { id: travListId },
-    ...[...new Set(local.map(i => i.traveler).filter(Boolean))].map(v => el('option', { value: v })));
-
-  const listEl = el('div', {});
-  function paintRows() {
-    clear(listEl);
-    local.forEach((it, i) => {
-      listEl.append(el('div', { class: 'tmpl-row' },
-        el('input', {
-          type: 'text', value: it.text || '', maxlength: '200', placeholder: 'Item',
-          class: 'tmpl-text', oninput: (e) => { local[i].text = e.target.value; },
-        }),
-        el('input', {
-          type: 'text', value: it.category || '', list: catListId, placeholder: 'Categorie',
-          class: 'tmpl-cat', oninput: (e) => { local[i].category = e.target.value; },
-        }),
-        el('input', {
-          type: 'number', min: '1', max: '99', value: String(it.quantity || 1),
-          class: 'qty-input', title: 'Aantal', 'aria-label': 'Aantal',
-          oninput: (e) => { local[i].quantity = Number(e.target.value) || 1; },
-        }),
-        el('input', {
-          type: 'text', value: it.traveler || '', list: travListId, placeholder: 'Voor wie?',
-          class: 'tmpl-cat', title: 'Leeg = algemeen',
-          oninput: (e) => { local[i].traveler = e.target.value; },
-        }),
-        el('button', {
-          type: 'button', class: 'btn btn-sm btn-ghost', title: 'Item verwijderen',
-          onclick: () => { local.splice(i, 1); paintRows(); },
-        }, '✕'),
-      ));
-    });
-  }
-  paintRows();
-
-  const saveBtn = el('button', { class: 'btn btn-primary' }, 'Sjabloon opslaan');
-  saveBtn.addEventListener('click', async () => {
-    errBox.textContent = '';
-    saveBtn.disabled = true;
+  // Autosave: één PUT tegelijk; wijzigingen tijdens het opslaan gaan in
+  // één volgende beurt mee.
+  let saving = false;
+  let dirtyAgain = false;
+  async function persist() {
+    if (saving) { dirtyAgain = true; return; }
+    saving = true;
     try {
-      await api(`/api/templates/${id}`, {
-        method: 'PUT',
-        body: { name: nameIn.value, items: local },
-      });
-      toast('Sjabloon opgeslagen');
-      navigate('#/new');
-    } catch (err) {
-      saveBtn.disabled = false;
-      errBox.textContent = err.message;
+      await api(`/api/templates/${id}`, { method: 'PUT', body: { name: nameIn.value.trim() || t.name, items: local } });
+    } catch (err) { toast(err.message); }
+    saving = false;
+    if (dirtyAgain) { dirtyAgain = false; persist(); }
+  }
+  nameIn.addEventListener('change', persist);
+
+  const usedCats = () => {
+    const used = [...new Set(local.map(i => i.category).filter(Boolean))];
+    used.sort((a, b) => {
+      const ia = CATEGORY_ORDER.indexOf(a); const ib = CATEGORY_ORDER.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b, 'nl');
+    });
+    return used;
+  };
+  const travNames = () => [...new Set(local.map(i => i.traveler).filter(Boolean))];
+
+  const itemsContainer = el('div', { class: 'items-container' });
+
+  function startRowEdit(li, idx) {
+    if (li.querySelector('.item-editor')) return;
+    const it = local[idx];
+    const textIn = el('input', { type: 'text', value: it.text || '', maxlength: '200' });
+    const qtyIn = el('input', { type: 'number', min: '1', max: '99', value: String(it.quantity || 1) });
+    const travSel = comboField({
+      options: travNames, value: it.traveler || '',
+      emptyLabel: 'Algemeen', newLabel: '+ Nieuwe reiziger…', ariaLabel: 'Voor wie',
+    });
+    const catSel = comboField({
+      options: usedCats, value: it.category || '',
+      emptyLabel: 'Overig', newLabel: '+ Nieuwe categorie…', ariaLabel: 'Categorie',
+    });
+    const editor = el('li', { class: 'item-editor' },
+      el('div', { class: 'row cols-2' },
+        el('div', { class: 'field' }, el('label', {}, 'Item'), textIn),
+        el('div', { class: 'field' }, el('label', {}, 'Aantal'), qtyIn),
+      ),
+      el('div', { class: 'row cols-2' },
+        el('div', { class: 'field' }, el('label', {}, 'Voor wie'), travSel.root),
+        el('div', { class: 'field' }, el('label', {}, 'Categorie'), catSel.root),
+      ),
+      el('div', { class: 'actions' },
+        el('button', { type: 'button', class: 'btn btn-sm', onclick: () => editor.remove() }, 'Annuleren'),
+        el('button', {
+          type: 'button', class: 'btn btn-sm btn-primary',
+          onclick: () => {
+            it.text = textIn.value.trim() || it.text;
+            it.quantity = Math.max(1, Math.min(99, Number(qtyIn.value) || 1));
+            it.traveler = travSel.getValue().trim() || null;
+            it.category = catSel.getValue().trim() || 'Overig';
+            persist();
+            paint();
+          },
+        }, 'Opslaan'),
+      ),
+    );
+    li.after(editor);
+    textIn.focus();
+  }
+
+  function paint() {
+    clear(itemsContainer);
+    if (!local.length) {
+      itemsContainer.append(el('div', { class: 'empty' }, 'Dit sjabloon is leeg — voeg hierboven items toe.'));
+      return;
     }
+    const groups = {};
+    local.forEach((it, idx) => {
+      const cat = it.category || 'Overig';
+      (groups[cat] = groups[cat] || []).push(idx);
+    });
+    const cats = Object.keys(groups).sort((a, b) => {
+      const ia = CATEGORY_ORDER.indexOf(a); const ib = CATEGORY_ORDER.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+    for (const cat of cats) {
+      const list = el('ul', { class: 'item-list' });
+      for (const idx of groups[cat]) {
+        const it = local[idx];
+        const textSpan = el('span', { class: 'text' }, it.text);
+        const li = el('li', { class: 'item' },
+          textSpan,
+          it.traveler ? el('span', { class: 'trav-tag' }, `(${it.traveler})`) : null,
+          (it.quantity || 1) > 1 ? el('span', { class: 'qty-print', style: 'display: inline' }, `× ${it.quantity}`) : null,
+          el('button', {
+            class: 'icon-btn', title: 'Bewerken',
+            onclick: (ev) => { ev.stopPropagation(); startRowEdit(li, idx); },
+          }, '✎'),
+          el('button', {
+            class: 'icon-btn delete', title: 'Verwijderen',
+            onclick: (ev) => {
+              ev.stopPropagation();
+              if (!confirm(`"${it.text}" uit het sjabloon verwijderen?`)) return;
+              local.splice(idx, 1);
+              persist();
+              paint();
+            },
+          }, '✕'),
+        );
+        textSpan.addEventListener('click', () => startRowEdit(li, idx));
+        list.append(li);
+      }
+      itemsContainer.append(el('div', { class: 'category-group' },
+        el('h2', { class: 'cat-header', style: 'cursor: default' },
+          el('span', { class: 'cat-name' }, cat),
+          el('span', { class: 'cat-count' }, String(groups[cat].length)),
+        ),
+        list,
+      ));
+    }
+  }
+
+  // Zelfde toevoegbalk als op de checklist.
+  const newIn = el('input', { type: 'text', placeholder: 'Item toevoegen…' });
+  const newQty = el('input', { type: 'number', min: '1', max: '99', value: '1', 'aria-label': 'Aantal', class: 'qty-input', title: 'Aantal' });
+  const newTrav = comboField({
+    options: travNames, emptyLabel: 'Algemeen',
+    newLabel: '+ Nieuwe reiziger…', ariaLabel: 'Voor wie', className: 'cat-input',
   });
+  const newCat = comboField({
+    options: usedCats, emptyLabel: 'Overig',
+    newLabel: '+ Nieuwe categorie…', ariaLabel: 'Categorie', className: 'cat-input',
+  });
+  const addForm = el('form', {
+    class: 'add-item',
+    onsubmit: (e) => {
+      e.preventDefault();
+      const text = newIn.value.trim();
+      if (!text) return;
+      const category = newCat.getValue().trim() || 'Overig';
+      const traveler = newTrav.getValue().trim() || null;
+      local.push({
+        text, category,
+        quantity: Math.max(1, Math.min(99, Number(newQty.value) || 1)),
+        traveler, origin: 'user',
+      });
+      newIn.value = '';
+      newQty.value = '1';
+      newCat.setValue(category === 'Overig' ? '' : category);
+      newTrav.setValue(traveler || '');
+      persist();
+      paint();
+      newIn.focus();
+    },
+  }, newIn, newQty, newTrav.root, newCat.root,
+    el('button', { type: 'submit', class: 'btn btn-primary' }, 'Toevoegen'));
 
   clear(app);
   app.append(
-    el('a', { href: '#/new', class: 'btn btn-sm btn-ghost' }, '← Terug'),
-    el('h1', { style: 'margin-top: 8px' }, 'Sjabloon bewerken'),
-    el('p', { class: 'muted' },
-      'Wijzigingen gelden alleen voor dit sjabloon — lijsten die je er eerder mee maakte veranderen niet mee.'),
-    el('div', { class: 'card spaced' },
-      el('div', { class: 'field' }, el('label', {}, 'Naam van het sjabloon *'), nameIn),
-      el('div', { class: 'field' },
-        el('label', {}, `Items (${local.length})`),
-        listEl, catDatalist, travDatalist,
+    el('a', { href: '#/sjablonen', class: 'btn btn-sm btn-ghost' }, '← Terug'),
+    el('div', { class: 'checklist-head' },
+      el('div', { style: 'flex: 1; min-width: 240px' },
+        el('h1', { style: 'margin: 8px 0 4px' }, '📋 Sjabloon'),
+        el('div', { class: 'field' }, nameIn),
       ),
-      el('button', {
-        class: 'btn btn-sm',
-        onclick: () => { local.push({ text: '', category: '', quantity: 1, traveler: null, origin: 'user' }); paintRows(); },
-      }, '+ Item'),
+      el('div', { class: 'head-actions' },
+        el('button', {
+          class: 'btn btn-danger btn-sm',
+          onclick: async (e) => {
+            if (!confirm(`Sjabloon "${t.name}" verwijderen? Bestaande lijsten blijven staan.`)) return;
+            e.target.disabled = true;
+            try {
+              await api(`/api/templates/${id}`, { method: 'DELETE' });
+              toast('Sjabloon verwijderd');
+              navigate('#/sjablonen');
+            } catch (err) { e.target.disabled = false; toast(err.message); }
+          },
+        }, 'Verwijderen'),
+      ),
     ),
-    errBox,
-    el('div', { class: 'actions' },
-      el('button', {
-        class: 'btn btn-danger',
-        onclick: async (e) => {
-          if (!confirm(`Sjabloon "${t.name}" verwijderen? Bestaande lijsten blijven staan.`)) return;
-          e.target.disabled = true;
-          try {
-            await api(`/api/templates/${id}`, { method: 'DELETE' });
-            toast('Sjabloon verwijderd');
-            navigate('#/new');
-          } catch (err) { e.target.disabled = false; toast(err.message); }
-        },
-      }, 'Verwijderen'),
-      saveBtn,
-    ),
+    el('p', { class: 'muted' },
+      'Wijzigingen worden direct opgeslagen en gelden alleen voor dit sjabloon — ',
+      'eerder aangemaakte lijsten veranderen niet mee.'),
+    addForm,
+    itemsContainer,
   );
+  paint();
 }
 
 // 'Automatisch vullen': de reisvragen, los van het aanmaken. Antwoorden
@@ -1065,20 +1182,33 @@ async function renderChecklist(id, epoch) {
   // Filter op reiziger: null = alles, '__shared__' = gedeelde items, anders de naam.
   let activeTraveler = null;
 
+  // Positie van een reizigers-label (incl. 'Algemeen') in de gewenste
+  // volgorde: eerst de zelf gesleepte volgorde, dan de reizigerslijst;
+  // 'Algemeen' staat standaard achteraan. Bepaalt de tabs én de
+  // groepsvolgorde — en daarmee ook de afdruk.
+  function travelerPos(label) {
+    const stored = Array.isArray(c.traveler_order) ? c.traveler_order : [];
+    const i = stored.indexOf(label);
+    if (i !== -1) return i;
+    if (label === 'Algemeen') return 9999;
+    const order = (Array.isArray(c.travelers) ? c.travelers : [])
+      .map((t, j) => (t.name && t.name.trim()) || `Reiziger ${j + 1}`);
+    const j = order.indexOf(label);
+    return 1000 + (j === -1 ? 900 : j);
+  }
+
   function travelerTabs() {
     const inItems = [...new Set(items.map(i => i.traveler).filter(Boolean))];
     if (!inItems.length) return null;
-    // Volgorde van het reizigers-formulier aanhouden.
-    const order = (Array.isArray(c.travelers) ? c.travelers : [])
-      .map((t, i) => (t.name && t.name.trim()) || `Reiziger ${i + 1}`);
-    inItems.sort((a, b) => {
-      const ia = order.indexOf(a); const ib = order.indexOf(b);
-      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
-    });
+    const labels = [
+      ...inItems.map(n => ({ label: n, value: n })),
+      { label: 'Algemeen', value: '__shared__' },
+    ].sort((a, b) => travelerPos(a.label) - travelerPos(b.label));
     const chips = el('div', { class: 'chips no-print' });
-    const mk = (label, value) => {
+    const mk = (label, value, draggable) => {
       const btn = el('button', {
         class: 'chip' + (activeTraveler === value ? ' active' : ''),
+        ...(draggable ? { 'data-drag': label, title: 'Sleep om de volgorde te bepalen (ook op de afdruk)' } : {}),
         onclick: () => {
           activeTraveler = value;
           chips.querySelectorAll('.chip').forEach(x => x.classList.remove('active'));
@@ -1090,9 +1220,26 @@ async function renderChecklist(id, epoch) {
       }, label);
       return btn;
     };
-    chips.append(mk('Alles', null));
-    for (const name of inItems) chips.append(mk(name, name));
-    chips.append(mk('Algemeen', '__shared__'));
+    chips.append(mk('Alles', null, false));
+    for (const { label, value } of labels) chips.append(mk(label, value, true));
+    // Slepen bepaalt de volgorde; kleine vertraging op touch zodat
+    // scrollen en tikken gewoon blijven werken.
+    if (typeof Sortable !== 'undefined') {
+      Sortable.create(chips, {
+        draggable: '[data-drag]',
+        animation: 150,
+        delay: 150,
+        delayOnTouchOnly: true,
+        onEnd: async () => {
+          const orderNow = [...chips.querySelectorAll('[data-drag]')].map(b => b.dataset.drag);
+          c.traveler_order = orderNow;
+          paintItems();
+          try {
+            await api(`/api/checklists/${c.id}`, { method: 'PATCH', body: { travelerOrder: orderNow } });
+          } catch (err) { toast(err.message); }
+        },
+      });
+    }
     return chips;
   }
 
@@ -1159,15 +1306,10 @@ async function renderChecklist(id, epoch) {
         return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
       });
     } else if (useTrav) {
-      // Per reiziger, in de volgorde van het reizigersoverzicht;
-      // 'Algemeen' (zonder persoon) achteraan.
-      const order = allTravelerNames();
-      cats = Object.keys(groups).sort((a, b) => {
-        if (a === 'Algemeen') return 1;
-        if (b === 'Algemeen') return -1;
-        const ia = order.indexOf(a); const ib = order.indexOf(b);
-        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b, 'nl');
-      });
+      // Per reiziger, in de (sleepbare) tab-volgorde; 'Algemeen' staat
+      // standaard achteraan.
+      cats = Object.keys(groups).sort((a, b) =>
+        travelerPos(a) - travelerPos(b) || a.localeCompare(b, 'nl'));
     } else {
       cats = Object.keys(groups);
     }
@@ -1392,6 +1534,13 @@ async function renderChecklist(id, epoch) {
         handle: '.drag-handle',
         animation: 150,
         ghostClass: 'sortable-ghost',
+        // Automatisch doorscrollen wanneer je naar de rand van het
+        // scherm sleept — ook op lange lijsten.
+        scroll: true,
+        forceAutoScrollFallback: true,
+        scrollSensitivity: 80,
+        scrollSpeed: 14,
+        bubbleScroll: true,
         onEnd: persistOrder,
       });
     });
@@ -1771,7 +1920,29 @@ async function renderChecklist(id, epoch) {
             onclick: (e) => { pop.hidden = true; handler(e); },
           }, label);
           const pop = el('div', { class: 'menu-pop', hidden: true });
-          pop.append(
+          pop.append(...[
+            menuItem(c.share_token ? 'Deellink kopiëren' : 'Delen (alleen-lezen link)', async () => {
+              try {
+                const r = await api(`/api/checklists/${c.id}/share`, { method: 'POST' });
+                const hadToken = !!c.share_token;
+                c.share_token = r.token;
+                const url = `${location.origin}/#/share/${r.token}`;
+                let copied = false;
+                try { await navigator.clipboard.writeText(url); copied = true; } catch {}
+                if (copied) toast('Deellink gekopieerd — wie de link heeft kan kijken en afdrukken, niets aanpassen');
+                else prompt('Kopieer de deellink:', url);
+                if (!hadToken) render();
+              } catch (err) { toast(err.message); }
+            }),
+            c.share_token ? menuItem('Delen stoppen', async () => {
+              if (!confirm('Delen stoppen? De bestaande deellink werkt dan niet meer.')) return;
+              try {
+                await api(`/api/checklists/${c.id}/share`, { method: 'DELETE' });
+                c.share_token = null;
+                toast('Delen gestopt');
+                render();
+              } catch (err) { toast(err.message); }
+            }) : null,
             menuItem('Sjabloon opslaan', async () => {
               const name = prompt('Naam voor het sjabloon:', c.name);
               if (name == null || !name.trim()) return;
@@ -1801,7 +1972,7 @@ async function renderChecklist(id, epoch) {
                 navigate('#/');
               } catch (err) { toast(err.message); }
             }, true),
-          );
+          ].filter(Boolean));
           const btn = el('button', {
             class: 'btn btn-sm', title: 'Meer acties',
             'aria-haspopup': 'true', 'aria-label': 'Meer acties',
@@ -2276,12 +2447,121 @@ async function renderOmgeving(id, epoch) {
 // nieuwe navigatie zijn data binnenkrijgt, is verouderd en mag het
 // scherm niet meer aanraken — anders tekent een traag (of mislukt)
 // Omgeving-verzoek zijn foutpagina over de checklist heen.
+// Alleen-lezen weergave van een gedeelde lijst (geen login nodig).
+// Kijken en afdrukken kan; aanpassen niet — er staat bewust geen enkel
+// bewerk-element in, en de API-route geeft ook alleen weergavevelden.
+async function renderShare(token, epoch) {
+  clear(app);
+  app.append(el('p', { class: 'loading' }, 'Gedeelde lijst laden…'));
+  let data;
+  try { data = await api(`/api/share/${token}`); }
+  catch (err) {
+    if (isStale(epoch)) return;
+    clear(app);
+    return app.append(el('div', { class: 'card empty' },
+      'Deze gedeelde lijst bestaat niet (meer). Vraag de eigenaar om een nieuwe link.'));
+  }
+  if (isStale(epoch)) return;
+
+  const c = data.checklist;
+  const items = data.items || [];
+  const useCats = c.use_categories !== false;
+  const useTrav = c.use_travelers !== false;
+  const useQty = c.use_quantities !== false;
+
+  const groupKey = useCats
+    ? (it => it.category || 'Overig')
+    : (useTrav ? (it => it.traveler || 'Algemeen') : (() => ''));
+  const travelerPos = (label) => {
+    const stored = Array.isArray(c.traveler_order) ? c.traveler_order : [];
+    const i = stored.indexOf(label);
+    if (i !== -1) return i;
+    return label === 'Algemeen' ? 9999 : 1000;
+  };
+
+  const dates = (c.start_date || c.end_date)
+    ? [fmtDate(c.start_date), fmtDate(c.end_date)].filter(Boolean).join(' – ')
+    : '';
+  const metaParts = [c.destination, dates].filter(Boolean);
+  const done = items.filter(i => i.is_checked).length;
+
+  // De QR op de afdruk verwijst naar deze deellink zelf.
+  const printQr = (() => {
+    if (typeof qrcode !== 'function') return null;
+    try {
+      const qr = qrcode(0, 'M');
+      qr.addData(`${location.origin}/#/share/${token}`);
+      qr.make();
+      const box = el('div', { class: 'print-qr' });
+      box.innerHTML = qr.createSvgTag({ cellSize: 2, margin: 0, scalable: true });
+      box.append(el('span', {}, 'Scan om de lijst te bekijken'));
+      return box;
+    } catch { return null; }
+  })();
+
+  clear(app);
+  app.append(
+    el('div', { class: 'checklist-head' },
+      el('div', {},
+        el('h1', { class: 'print-title', style: 'margin-top: 8px' }, c.name),
+        metaParts.length ? el('div', { class: 'checklist-meta' }, metaParts.join(' • ')) : null,
+      ),
+      printQr,
+      el('div', { class: 'head-actions no-print' },
+        el('button', { class: 'btn btn-sm', onclick: () => window.print() }, 'Afdrukken'),
+      ),
+    ),
+    el('p', { class: 'muted no-print' },
+      `Alleen-lezen: deze lijst is met je gedeeld. ${done}/${items.length} ingepakt.`),
+  );
+
+  const container = el('div', { class: 'items-container' });
+  const groups = {};
+  for (const it of items) {
+    const g = groupKey(it);
+    (groups[g] = groups[g] || []).push(it);
+  }
+  let cats;
+  if (useCats) {
+    cats = Object.keys(groups).sort((a, b) => {
+      const ia = CATEGORY_ORDER.indexOf(a); const ib = CATEGORY_ORDER.indexOf(b);
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
+    });
+  } else if (useTrav) {
+    cats = Object.keys(groups).sort((a, b) =>
+      travelerPos(a) - travelerPos(b) || a.localeCompare(b, 'nl'));
+  } else {
+    cats = Object.keys(groups);
+  }
+  for (const cat of cats) {
+    const list = el('ul', { class: 'item-list' });
+    for (const it of groups[cat]) {
+      list.append(el('li', { class: 'item' + (it.is_checked ? ' done' : '') },
+        el('input', { type: 'checkbox', checked: it.is_checked, disabled: true }),
+        el('span', { class: 'text' }, it.text),
+        (useCats && useTrav && it.traveler) ? el('span', { class: 'trav-tag' }, `(${it.traveler})`) : null,
+        (useQty && it.quantity > 1) ? el('span', { class: 'qty-print', style: 'display: inline' }, `× ${it.quantity}`) : null,
+      ));
+    }
+    container.append(el('div', { class: 'category-group' },
+      cat ? el('h2', { class: 'cat-header', style: 'cursor: default' },
+        el('span', { class: 'cat-name' }, cat)) : null,
+      list,
+    ));
+  }
+  app.append(container);
+}
+
 let renderEpoch = 0;
 function isStale(epoch) { return epoch !== renderEpoch; }
 
 async function render() {
   const epoch = ++renderEpoch;
   const hash = location.hash || '#/';
+
+  // Gedeelde lijsten zijn openbaar (alleen-lezen): geen login nodig.
+  const shareM = hash.match(/^#\/share\/([a-f0-9]{16,64})$/);
+  if (shareM) return renderShare(shareM[1], epoch);
 
   if (!currentUser && hash !== '#/login') {
     try {
@@ -2300,6 +2580,7 @@ async function render() {
   // /edit is de oude naam van deze pagina — oude bladwijzers blijven werken.
   const fillM = hash.match(/^#\/list\/(\d+)\/(vullen|edit)$/);
   if (fillM) return renderAutoFill(fillM[1], epoch);
+  if (hash === '#/sjablonen') return renderTemplates(epoch);
   const tmplM = hash.match(/^#\/sjabloon\/(\d+)$/);
   if (tmplM) return renderTemplate(tmplM[1], epoch);
   const geoM = hash.match(/^#\/list\/(\d+)\/omgeving$/);

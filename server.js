@@ -30,6 +30,7 @@ app.use('/api/meta', metaRoutes);
 app.use('/api/geo', require('./routes/geo'));
 app.use('/api/family', require('./routes/family'));
 app.use('/api/templates', require('./routes/templates'));
+app.use('/api/share', require('./routes/share'));
 app.use('/admin', require('./routes/admin'));
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
