@@ -668,66 +668,6 @@ function prefetchNearby(lat, lng, attempt = 1) {
     });
 }
 
-// ---- evenementen (Ticketmaster Discovery, optioneel) ----
-//
-// Lokale agenda tijdens het verblijf: concerten, shows, festivals en
-// sport binnen 40 km, mét de specifieke datum. Gratis API-sleutel via
-// developer.ticketmaster.com; zonder sleutel blijft de sectie weg.
-router.get('/events', async (req, res) => {
-  const c = parseCoords(req);
-  if (!c) return res.status(400).json({ error: 'Ongeldige coördinaten' });
-  if (!process.env.TICKETMASTER_API_KEY) return res.json({ events: null });
-
-  const isDate = v => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
-  const from = isDate(req.query.from) ? String(req.query.from) : null;
-  const to = isDate(req.query.to) ? String(req.query.to) : null;
-  // Zonder reisdata: de komende 30 dagen.
-  const start = from ? `${from}T00:00:00Z` : `${new Date().toISOString().slice(0, 10)}T00:00:00Z`;
-  const end = `${to || new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().slice(0, 10)}T23:59:59Z`;
-
-  const key = `events:v1:${c.lat.toFixed(2)}:${c.lng.toFixed(2)}:${from || 'x'}:${to || 'x'}`;
-  const cached = await cacheGetAny(key, 24 * 3600 * 1000);
-  if (cached && cached.fresh) return res.json(cached.data);
-
-  try {
-    const url = 'https://app.ticketmaster.com/discovery/v2/events.json'
-      + `?apikey=${process.env.TICKETMASTER_API_KEY}`
-      + `&latlong=${c.lat.toFixed(4)},${c.lng.toFixed(4)}&radius=40&unit=km`
-      + `&startDateTime=${start}&endDateTime=${end}`
-      + '&size=30&sort=date,asc&locale=*';
-    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
-    if (!r.ok) throw new Error(`Ticketmaster ${r.status}`);
-    const data = await r.json();
-    const seen = new Set();
-    const events = ((data._embedded && data._embedded.events) || [])
-      .map(ev => {
-        const venue = ev._embedded && ev._embedded.venues && ev._embedded.venues[0];
-        return {
-          name: ev.name,
-          date: (ev.dates && ev.dates.start && ev.dates.start.localDate) || null,
-          time: (ev.dates && ev.dates.start && ev.dates.start.localTime) || null,
-          venue: venue ? [venue.name, venue.city && venue.city.name].filter(Boolean).join(', ') : null,
-          url: ev.url || null,
-        };
-      })
-      .filter(e => e.name && e.date)
-      .filter(e => {
-        const k = `${e.name.toLowerCase()}|${e.date}`;
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      })
-      .slice(0, 15);
-    const payload = { events };
-    await cacheSet(key, payload);
-    res.json(payload);
-  } catch (err) {
-    console.warn('[geo/events]', err.message);
-    // Stil falen: liever geen agenda dan een kapotte omgevingspagina.
-    res.json(cached ? cached.data : { events: [] });
-  }
-});
-
 // Eigen categorie: één vrije Places-zoekopdracht rond de bestemming
 // (label + zoekterm uit de categorie-instellingen van de checklist).
 // Zelfde kwaliteitslat (open + 25+ reviews), maar géén uitsluitfilter:

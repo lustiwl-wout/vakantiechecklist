@@ -2555,43 +2555,33 @@ async function renderOmgeving(id, epoch) {
   const customWrap = el('div', {});
   app.append(catPrefsCard, eventsWrap, catsWrap, customWrap);
 
-  // Lokale agenda: evenementen mét hun specifieke datum — tijdens het
-  // verblijf als er reisdata zijn, anders de komende 30 dagen. Zonder
-  // geconfigureerde agenda-sleutel blijft de sectie onzichtbaar.
+  // Lokale agenda: braderieën, markten en dorpsfeesten staan in geen
+  // enkele vrije databank — de lokale uitagenda's en VVV-sites wél
+  // bovenaan een gerichte zoekopdracht. Eén tik en je zit erin,
+  // toegespitst op je bestemming en reismaand.
   (() => {
+    if (!c.destination) return;
     const from = isoDateOnly(c.start_date);
-    const to = isoDateOnly(c.end_date);
-    const qs = `lat=${c.lat}&lng=${c.lng}` + (from ? `&from=${from}` : '') + (to ? `&to=${to}` : '');
-    api(`/api/geo/events?${qs}`)
-      .then(r => {
-        if (isStale(epoch)) return;
-        if (!r.events || !r.events.length) return;
-        const fmtEv = (d) => new Date(`${d}T12:00:00`).toLocaleDateString('nl-NL', {
-          weekday: 'short', day: 'numeric', month: 'short',
-        });
-        const ul = el('ul', { class: 'poi-list' });
-        for (const ev of r.events) {
-          ul.append(el('li', {},
-            el('span', { class: 'poi-name' },
-              el('strong', {}, `${fmtEv(ev.date)}${ev.time ? ` ${ev.time.slice(0, 5)}` : ''}`),
-              ' — ',
-              ev.url
-                ? el('a', { href: ev.url, target: '_blank', rel: 'noopener' }, ev.name)
-                : ev.name,
-              ev.venue ? el('span', { class: 'muted' }, ` (${ev.venue})`) : null,
-            ),
-          ));
-        }
-        eventsWrap.append(el('div', { class: 'card poi-card' },
-          el('h2', { style: 'margin: 0 0 4px' }, '📅 Agenda in de buurt'),
-          el('p', { class: 'muted', style: 'margin: 0 0 10px' },
-            (from && to)
-              ? 'Evenementen tijdens je verblijf, binnen ± 40 km — met de datum erbij.'
-              : 'Evenementen in de komende 30 dagen, binnen ± 40 km. Vul je reisdata in (Automatisch vullen) voor de agenda tijdens je verblijf.'),
-          ul,
-        ));
-      })
-      .catch(() => { /* agenda is een extraatje — stil overslaan */ });
+    let period = '';
+    if (from) {
+      const d = new Date(`${from}T12:00:00`);
+      period = ' ' + d.toLocaleDateString('nl-NL', { month: 'long', year: 'numeric' });
+    }
+    const q = encodeURIComponent(`evenementen agenda ${c.destination}${period}`);
+    eventsWrap.append(el('div', { class: 'card poi-card' },
+      el('h2', { style: 'margin: 0 0 4px' }, '📅 Lokale agenda'),
+      el('p', { class: 'muted', style: 'margin: 0 0 10px' },
+        'Braderieën, markten en dorpsfeesten staan het compleetst in de lokale uitagenda. ',
+        from
+          ? 'Deze zoekopdracht is alvast toegespitst op je reismaand — let op de exacte datums bij elk evenement.'
+          : 'Vul je reisdata in (Automatisch vullen), dan spitsen we de zoekopdracht toe op je reismaand.'),
+      el('a', {
+        class: 'btn btn-sm',
+        href: `https://www.google.com/search?q=${q}`,
+        target: '_blank',
+        rel: 'noopener',
+      }, `Open de uitagenda van ${c.destination} →`),
+    ));
   })();
 
   function paintCats() {
