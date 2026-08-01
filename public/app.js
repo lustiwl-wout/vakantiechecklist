@@ -2550,9 +2550,49 @@ async function renderOmgeving(id, epoch) {
     );
   })();
 
+  const eventsWrap = el('div', {});
   const catsWrap = el('div', {});
   const customWrap = el('div', {});
-  app.append(catPrefsCard, catsWrap, customWrap);
+  app.append(catPrefsCard, eventsWrap, catsWrap, customWrap);
+
+  // Lokale agenda: evenementen mét hun specifieke datum — tijdens het
+  // verblijf als er reisdata zijn, anders de komende 30 dagen. Zonder
+  // geconfigureerde agenda-sleutel blijft de sectie onzichtbaar.
+  (() => {
+    const from = isoDateOnly(c.start_date);
+    const to = isoDateOnly(c.end_date);
+    const qs = `lat=${c.lat}&lng=${c.lng}` + (from ? `&from=${from}` : '') + (to ? `&to=${to}` : '');
+    api(`/api/geo/events?${qs}`)
+      .then(r => {
+        if (isStale(epoch)) return;
+        if (!r.events || !r.events.length) return;
+        const fmtEv = (d) => new Date(`${d}T12:00:00`).toLocaleDateString('nl-NL', {
+          weekday: 'short', day: 'numeric', month: 'short',
+        });
+        const ul = el('ul', { class: 'poi-list' });
+        for (const ev of r.events) {
+          ul.append(el('li', {},
+            el('span', { class: 'poi-name' },
+              el('strong', {}, `${fmtEv(ev.date)}${ev.time ? ` ${ev.time.slice(0, 5)}` : ''}`),
+              ' — ',
+              ev.url
+                ? el('a', { href: ev.url, target: '_blank', rel: 'noopener' }, ev.name)
+                : ev.name,
+              ev.venue ? el('span', { class: 'muted' }, ` (${ev.venue})`) : null,
+            ),
+          ));
+        }
+        eventsWrap.append(el('div', { class: 'card poi-card' },
+          el('h2', { style: 'margin: 0 0 4px' }, '📅 Agenda in de buurt'),
+          el('p', { class: 'muted', style: 'margin: 0 0 10px' },
+            (from && to)
+              ? 'Evenementen tijdens je verblijf, binnen ± 40 km — met de datum erbij.'
+              : 'Evenementen in de komende 30 dagen, binnen ± 40 km. Vul je reisdata in (Automatisch vullen) voor de agenda tijdens je verblijf.'),
+          ul,
+        ));
+      })
+      .catch(() => { /* agenda is een extraatje — stil overslaan */ });
+  })();
 
   function paintCats() {
     clear(catsWrap);

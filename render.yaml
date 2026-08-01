@@ -24,3 +24,8 @@ services:
       # per locatie per maand); een maandteller bewaakt het gratis tegoed.
       - key: GOOGLE_PLACES_API_KEY
         sync: false
+      # Optioneel: gratis Ticketmaster Discovery-sleutel
+      # (developer.ticketmaster.com) voor de evenementen-agenda op de
+      # Omgeving-pagina. Zonder sleutel blijft die sectie gewoon weg.
+      - key: TICKETMASTER_API_KEY
+        sync: false
