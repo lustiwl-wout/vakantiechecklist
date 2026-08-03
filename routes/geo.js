@@ -256,7 +256,11 @@ async function googleBudgetOk() {
 // De FieldMask bepaalt óók het tarief: naam, sterren en locatie is wat
 // we tonen; primaryType valt binnen dezelfde tariefklasse en laat ons
 // accommodaties (campings, hotels) uit de uitjes filteren.
-const PLACES_FIELDMASK = 'places.displayName,places.rating,places.userRatingCount,places.location,places.primaryType,places.businessStatus';
+const PLACES_FIELDMASK = 'places.displayName,places.rating,places.userRatingCount,places.location,places.primaryType,places.businessStatus,places.types';
+
+// Alleen deze bij-typen bewaren we (compact in de cache): ze kunnen een
+// plek 'redden' die op zijn hoofdtype zou afvallen.
+const KEPT_SUB_TYPES = new Set(['water_park', 'swimming_pool']);
 
 async function placesCall(path, body) {
   if (!process.env.GOOGLE_PLACES_API_KEY) throw new Error('Omgeving vereist een Google Places API-sleutel');
@@ -282,6 +286,8 @@ async function placesCall(path, body) {
       lo: p.location ? Math.round(p.location.longitude * 1000) / 1000 : null,
       pt: p.primaryType || null,
       bs: p.businessStatus || null,
+      ...(Array.isArray(p.types) && p.types.some(t => KEPT_SUB_TYPES.has(t))
+        ? { ts: p.types.filter(t => KEPT_SUB_TYPES.has(t)) } : {}),
     }))
     .filter(p => p.name && p.la != null);
 }
@@ -303,7 +309,7 @@ const PLACES_CATEGORIES = [
   { key: 'zoo', label: 'Dierentuinen', ages: 'alle leeftijden', activity: 'daytrip', radiusKm: 35, types: ['zoo'], expectPt: ['zoo', 'wildlife_park', 'petting_zoo', 'aquarium'] },
   { key: 'pettingzoo', label: 'Kinderboerderijen', ages: 'jonge kinderen', activity: 'daytrip', radiusKm: 15, text: 'kinderboerderij' },
   { key: 'aquarium', label: 'Aquaria', ages: 'alle leeftijden', activity: 'daytrip', radiusKm: 35, types: ['aquarium'], expectPt: ['aquarium', 'zoo'] },
-  { key: 'waterpark', label: 'Zwembaden & waterparken', ages: 'alle leeftijden', activity: 'pool', radiusKm: 30, types: ['water_park'], text: 'zwembad' },
+  { key: 'waterpark', label: 'Zwembaden & waterparken', ages: 'alle leeftijden', activity: 'pool', radiusKm: 30, types: ['water_park'], text: 'zwembad', rescueTypes: ['water_park', 'swimming_pool'] },
   { key: 'nature', label: 'Natuur & wandelgebieden', ages: 'alle leeftijden', activity: 'hiking', radiusKm: 35, types: ['national_park', 'hiking_area'] },
   { key: 'museum', label: 'Musea', ages: 'vanaf ± 6 jaar', activity: 'cultural', radiusKm: 25, types: ['museum'], expectPt: null },
   // Galerieën zijn een eigen categorie die de frontend standaard
@@ -370,7 +376,7 @@ function updateNeighboursLater(lat, lng, attempt = 1) {
 
 // Alleen ophogen als de categorie-opzet verandert en de gecachte data
 // dus soorten mist. Weergave-/filterwijzigingen draaien bij het lezen.
-const PLACES_VERSION = 4; // v4: galerie-categorie (v3: businessStatus, v2: primaryType)
+const PLACES_VERSION = 5; // v5: bij-typen voor de hotel-met-zwemparadijs-redding (v4: galerieën)
 
 // Sommige bedrijven zijn geen uitje maar duiken wel op in de
 // resultaten: een boerderijcamping met dieren telt bij Google soms als
@@ -394,6 +400,16 @@ const EXCLUDED_NAME_RE = /\b(camping|kamperen|minicamping|boerderijcamping|groep
 function isExcludedPlace(p) {
   if (p.pt && EXCLUDED_PRIMARY_TYPES.has(p.pt)) return true;
   return EXCLUDED_NAME_RE.test(p.name);
+}
+
+// De Bonte Wever-redding: een hotel dat volgens Googles typenlijst óók
+// waterpark/zwembad is, hoort wél bij Zwembaden — daar is het zwem-
+// paradijs de publiekstrekker. Alleen voor hotel-achtige hoofdtypen;
+// campings en vakantieparken (pools meestal alleen voor gasten) niet.
+function rescuedByTypes(def, p) {
+  if (!def.rescueTypes || !Array.isArray(p.ts)) return false;
+  if (p.pt && !['hotel', 'resort_hotel', 'extended_stay_hotel'].includes(p.pt)) return false;
+  return p.ts.some(t => def.rescueTypes.includes(t));
 }
 
 function nearbyKey(lat, lng) {
@@ -478,6 +494,23 @@ function buildPayload(lat, lng, raw) {
   for (const [k, list] of Object.entries(raw.cats)) cats[k] = [...(list || [])];
   cats.nature = cats.nature || [];
 
+  // Natuurlijk water (pt natural_feature) is geen zwembad: vanuit
+  // zwembad-achtige categorieën verhuist het naar zwemplassen, elders
+  // naar natuur (Lycklamavaart-geval).
+  cats.beach = cats.beach || [];
+  for (const k of ['waterpark', 'zoo', 'themepark', 'aquarium']) {
+    if (!cats[k]) continue;
+    const stay = [];
+    for (const p of cats[k]) {
+      if (p.pt === 'natural_feature') {
+        (k === 'waterpark' ? cats.beach : cats.nature).push(p);
+      } else {
+        stay.push(p);
+      }
+    }
+    cats[k] = stay;
+  }
+
   // Galerie als hoofdtype → naar de galerie-categorie, waar hij ook
   // gevonden werd (een verkoop-galerie met museum-bijcategorie hoort
   // niet tussen de musea).
@@ -517,7 +550,7 @@ function buildPayload(lat, lng, raw) {
 
   const categories = PLACES_CATEGORIES.map(def => {
     const pois = (cats[def.key] || [])
-      .filter(p => !isExcludedPlace(p))
+      .filter(p => !isExcludedPlace(p) || rescuedByTypes(def, p))
       // (Tijdelijk) gesloten? Dan heeft tonen geen zin. Zonder status
       // (oudere cache) tonen we gewoon.
       .filter(p => !p.bs || p.bs === 'OPERATIONAL')
