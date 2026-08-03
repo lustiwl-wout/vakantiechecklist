@@ -2550,39 +2550,9 @@ async function renderOmgeving(id, epoch) {
     );
   })();
 
-  const eventsWrap = el('div', {});
   const catsWrap = el('div', {});
   const customWrap = el('div', {});
-  app.append(catPrefsCard, eventsWrap, catsWrap, customWrap);
-
-  // Lokale agenda: braderieën, markten en dorpsfeesten staan in geen
-  // enkele vrije databank — de lokale uitagenda's en VVV-sites wél
-  // bovenaan een gerichte zoekopdracht. Eén tik en je zit erin,
-  // toegespitst op je bestemming en reismaand.
-  (() => {
-    if (!c.destination) return;
-    const from = isoDateOnly(c.start_date);
-    let period = '';
-    if (from) {
-      const d = new Date(`${from}T12:00:00`);
-      period = ' ' + d.toLocaleDateString('nl-NL', { month: 'long', year: 'numeric' });
-    }
-    const q = encodeURIComponent(`evenementen agenda ${c.destination}${period}`);
-    eventsWrap.append(el('div', { class: 'card poi-card' },
-      el('h2', { style: 'margin: 0 0 4px' }, '📅 Lokale agenda'),
-      el('p', { class: 'muted', style: 'margin: 0 0 10px' },
-        'Braderieën, markten en dorpsfeesten staan het compleetst in de lokale uitagenda. ',
-        from
-          ? 'Deze zoekopdracht is alvast toegespitst op je reismaand — let op de exacte datums bij elk evenement.'
-          : 'Vul je reisdata in (Automatisch vullen), dan spitsen we de zoekopdracht toe op je reismaand.'),
-      el('a', {
-        class: 'btn btn-sm',
-        href: `https://www.google.com/search?q=${q}`,
-        target: '_blank',
-        rel: 'noopener',
-      }, `Open de uitagenda van ${c.destination} →`),
-    ));
-  })();
+  app.append(catPrefsCard, catsWrap, customWrap);
 
   function paintCats() {
     clear(catsWrap);
