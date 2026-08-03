@@ -494,15 +494,21 @@ function buildPayload(lat, lng, raw) {
   for (const [k, list] of Object.entries(raw.cats)) cats[k] = [...(list || [])];
   cats.nature = cats.nature || [];
 
-  // Natuurlijk water (pt natural_feature) is geen zwembad: vanuit
-  // zwembad-achtige categorieën verhuist het naar zwemplassen, elders
-  // naar natuur (Lycklamavaart-geval).
+  // Natuurlijk water is geen zwembad: vanuit zwembad-achtige
+  // categorieën verhuist het naar zwemplassen, elders naar natuur.
+  // Twee signalen: Googles eigen typering (natural_feature) én de naam —
+  // de 'Lycklemevaart' staat bij Google nota bene als waterpark, maar
+  // een …vaart/…gracht/…kanaal is gewoon een waterweg. Een écht zwembad
+  // dat 'De Vaart' heet blijft staan dankzij de zwem-woorden-uitzondering.
+  const isWaterwayName = (p) =>
+    /(vaart|gracht|kanaal|kolk|petgat)\s*$/i.test(p.name)
+    && !/zwembad|zwemparadijs|bosbad|buitenbad|binnenbad|pool/i.test(p.name);
   cats.beach = cats.beach || [];
   for (const k of ['waterpark', 'zoo', 'themepark', 'aquarium']) {
     if (!cats[k]) continue;
     const stay = [];
     for (const p of cats[k]) {
-      if (p.pt === 'natural_feature') {
+      if (p.pt === 'natural_feature' || (k === 'waterpark' && isWaterwayName(p))) {
         (k === 'waterpark' ? cats.beach : cats.nature).push(p);
       } else {
         stay.push(p);
